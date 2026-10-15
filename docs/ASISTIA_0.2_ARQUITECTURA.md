@@ -15,6 +15,7 @@ Iniciar la transición del HTML local a una API con persistencia centralizada, u
 - `GET /api/health`
 - `POST /api/auth/login`
 - `GET /api/me`, `GET /api/company`
+- `POST /api/users` (solo administrador; crea cuentas con rol y vinculación opcional/obligatoria para trabajador)
 - `GET/POST /api/employees`, `PATCH /api/employees/:id/deactivate`
 - `POST/GET /api/attendance/events`
 - `POST/GET /api/attendance/corrections`, `POST /api/attendance/corrections/:id/review`
