@@ -505,6 +505,7 @@ function emptyDb(){
     sessions: [],
     incidents: [],
     audit: [],
+    complianceAgreements: [],
     meta: {lastBackup: null, lastSave: null, quoteSeed: Math.floor(Math.random()*QUOTES.length)}
   };
 }
@@ -521,6 +522,8 @@ function loadDb(){
       return;
     }
     db = parsed;
+    if(!Array.isArray(db.complianceAgreements)) db.complianceAgreements = [];
+    if(!db.meta) db.meta = {};
     if(!db.company.backupRemindDays) db.company.backupRemindDays = 7;
     if(db.company && typeof db.company.reportFooter === "string" && /Control de Asistencia Pro/i.test(db.company.reportFooter)){
       db.company.reportFooter = db.company.reportFooter.replace(/Control de Asistencia Pro/gi, "ASISTIA");
@@ -1333,7 +1336,8 @@ const NAV = [
   ["incidents","Incidencias"],
   ["settings","Configuración"],
   ["backup","Respaldos y recuperación"],
-  ["audit","Auditoría"]
+  ["audit","Auditoría"],
+  ["compliance","Cumplimiento LFT"]
 ];
 
 function renderAdmin(){
@@ -1385,6 +1389,7 @@ function renderSection(){
     case "settings": return viewSettings();
     case "backup": return viewBackup();
     case "audit": return viewAudit();
+    case "compliance": return viewCompliance();
     default: return "";
   }
 }
@@ -2009,6 +2014,40 @@ function viewBackup(){
       <p><b>Regla de importación:</b> puede reemplazar todo o fusionar. En fusión, los registros con el mismo identificador se conservan (no se duplican) y se agregan los nuevos.</p>
     </div>`;
 }
+
+function viewCompliance(){
+ const agreements=Array.isArray(db.complianceAgreements)?db.complianceAgreements:[];
+ const result=checkDataConsistency();
+ return `<div class="page-head"><div><p class="brand-eyebrow">ASISTIA / CONTROL DOCUMENTAL</p><h2>Preparación para cumplimiento laboral</h2><p class="hint">Constancias, consistencia de registros y exportación de evidencia.</p></div></div>
+ <div class="warn-banner">Esta versión conserva datos en el navegador. Este módulo no certifica cumplimiento legal ni sustituye las disposiciones de la STPS, la revisión jurídica o una base de datos centralizada.</div>
+ <div class="card"><h3>Constancia del procedimiento de registro</h3><p class="hint">Esta constancia documenta una captura administrativa. No equivale por sí sola a firma electrónica ni prueba de forma independiente la identidad del trabajador.</p>
+ ${db.employees.length?`<form id="compAgreementForm"><div class="field"><label>Trabajador</label><select name="employeeId" required><option value="">Selecciona trabajador</option>${db.employees.map(e=>`<option value="${escapeHtml(e.id)}">${escapeHtml(employeeName(e))} · ${escapeHtml(e.employeeNumber||e.id)}</option>`).join("")}</select></div><div class="field"><label>Procedimiento explicado</label><textarea name="agreementText" rows="4" required>Tuve acceso a la explicación del procedimiento de registro electrónico de inicio y finalización de jornada, la consulta de marcajes y el mecanismo para solicitar la revisión de datos incorrectos. Esta constancia no limita derechos laborales ni sustituye un acuerdo jurídico específico.</textarea></div><label class="check"><input type="checkbox" name="confirm" required> Confirmo que se registra con conocimiento del trabajador y que su identidad fue verificada por el responsable.</label><div class="toolbar"><button class="btn btn-primary" type="submit">Guardar constancia</button></div></form>`:`<p class="hint">Primero registra trabajadores en Empleados.</p>`}</div>
+ <div class="card"><h3>Expediente y verificación</h3><p class="hint">Constancias guardadas: ${agreements.length} · Eventos de auditoría: ${db.audit.length}</p><div class="toolbar"><button class="btn btn-primary" id="compExport">Exportar expediente con huella</button><button class="btn btn-ghost" id="compVerify">Verificar consistencia</button></div>
+ ${result.ok?`<div class="info-banner">No se detectaron inconsistencias básicas en identificadores y fechas revisados.</div>`:`<div class="warn-banner"><b>Observaciones:</b><ul>${result.errors.map(e=>`<li>${escapeHtml(e)}</li>`).join("")}</ul></div>`}
+ ${agreements.length?`<div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Trabajador</th><th>Versión</th><th>Capturó</th></tr></thead><tbody>${agreements.slice().reverse().map(a=>`<tr><td>${escapeHtml(formatDateShort(zoned(a.acceptedAt).date))} ${escapeHtml(formatTime(a.acceptedAt))}</td><td>${escapeHtml(a.employeeName)}</td><td>${escapeHtml(a.version)}</td><td>${escapeHtml(a.recordedBy)}</td></tr>`).join("")}</tbody></table></div>`:`<p class="hint">Aún no hay constancias.</p>`}</div>
+ <div class="card"><h3>Pendientes para una solución robusta</h3><ul><li>Base de datos centralizada, autenticación y permisos en servidor.</li><li>Respaldos independientes y restauración probada.</li><li>Historial protegido contra alteraciones y conservación de originales.</li><li>Validación jurídica del acuerdo y de cómo acreditar su aceptación.</li><li>Revisión de las disposiciones generales aplicables de la STPS.</li></ul><p class="hint">Estas medidas de infraestructura no pueden implementarse de forma real dentro de un HTML autónomo que solo utiliza localStorage.</p></div>`;
+}
+function checkDataConsistency(){
+ const errors=[];
+ const check=(list,label)=>{const ids=new Set();(list||[]).forEach(x=>{if(!x.id)errors.push(label+": registro sin identificador.");else if(ids.has(x.id))errors.push(label+": identificador duplicado "+x.id);else ids.add(x.id);});};
+ check(db.employees,"Empleados");check(db.sessions,"Jornadas");check(db.audit,"Auditoría");check(db.incidents,"Incidencias");check(db.complianceAgreements||[],"Constancias");
+ (db.sessions||[]).forEach(x=>{if(x.clockIn&&Number.isNaN(Date.parse(x.clockIn)))errors.push("Jornada "+x.id+": entrada inválida.");if(x.clockOut&&Number.isNaN(Date.parse(x.clockOut)))errors.push("Jornada "+x.id+": salida inválida.");if(x.clockIn&&x.clockOut&&Date.parse(x.clockOut)<Date.parse(x.clockIn))errors.push("Jornada "+x.id+": salida anterior a entrada.");});
+ return {ok:errors.length===0,errors};
+}
+async function exportComplianceEvidence(){
+ const payload={format:"ASISTIA-COMPLIANCE-EVIDENCE-1.0",exportedAt:nowIso(),company:{name:db.company.name,timezone:tz()},notice:"Expediente para revisión; no es certificación de cumplimiento ni prueba por sí solo de autenticidad de origen.",sessions:db.sessions,employees:db.employees.map(e=>({id:e.id,employeeNumber:e.employeeNumber,fullName:e.fullName,active:e.active,department:e.department,position:e.position})),incidents:db.incidents,audit:db.audit,agreements:db.complianceAgreements||[],consistency:checkDataConsistency()};
+ let digest=null;if(window.crypto&&crypto.subtle){try{digest=bytesToHex(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(JSON.stringify(payload))));}catch(e){}}
+ const out={...payload,integrity:{algorithm:digest?"SHA-256":null,digest,scope:"Huella de la copia exportada; no certifica la veracidad de origen."}};
+ downloadBlob(JSON.stringify(out,null,2),"ASISTIA_Expediente_"+safeName(db.company.name)+"_"+todayIso()+".json","application/json;charset=utf-8");
+ audit("export_expediente","Expediente exportado; SHA-256: "+(digest||"no disponible"));saveDb();toast(digest?"Expediente exportado con huella SHA-256.":"Expediente exportado sin huella criptográfica.",digest?"ok":"");
+}
+function bindCompliance(){
+ const form=document.getElementById("compAgreementForm");
+ if(form)form.onsubmit=(e)=>{e.preventDefault();const fd=new FormData(form);if(!fd.get("confirm"))return;const emp=empById(String(fd.get("employeeId")||""));if(!emp){toast("Selecciona un trabajador válido.","err");return;}const textValue=String(fd.get("agreementText")||"").trim();if(!textValue){toast("El texto no puede quedar vacío.","err");return;}if(!Array.isArray(db.complianceAgreements))db.complianceAgreements=[];const a={id:uid("agr"),employeeId:emp.id,employeeName:employeeName(emp),version:"ASISTIA-JORNADA-1.0",agreementText:textValue,acceptedAt:nowIso(),recordedBy:adminSessionName()||db.company.adminName||"administrador",method:"Captura administrativa; identidad verificada por el responsable",notice:"Constancia local, no equivale por sí sola a firma electrónica."};db.complianceAgreements.push(a);audit("constancia_jornada","Constancia registrada para "+a.employeeName+"; versión "+a.version);if(saveDb()){toast("Constancia guardada localmente; conserva evidencia de aceptación.","ok");renderAdmin();}};
+ const ex=document.getElementById("compExport");if(ex)ex.onclick=()=>exportComplianceEvidence();
+ const ve=document.getElementById("compVerify");if(ve)ve.onclick=()=>{const r=checkDataConsistency();if(r.ok)toast("Sin inconsistencias básicas detectadas.","ok");else modal("<h3>Observaciones</h3><ul>"+r.errors.map(x=>"<li>"+escapeHtml(x)+"</li>").join("")+"</ul><button class='btn btn-primary' id='closeIntegrity'>Cerrar</button>");const c=document.getElementById("closeIntegrity");if(c)c.onclick=closeModal;};
+}
+
 function viewAudit(){
   return `<div class="page-head"><h2>Auditoría</h2></div>
     <div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Actor</th><th>Acción</th><th>Detalle</th></tr></thead><tbody>
@@ -2100,6 +2139,7 @@ function bindSection(){
   if(ui.adminSection==="reports") bindReports();
   if(ui.adminSection==="settings") bindSettings();
   if(ui.adminSection==="backup") bindBackup();
+  if(ui.adminSection==="compliance") bindCompliance();
 }
 
 function drawChart(){
