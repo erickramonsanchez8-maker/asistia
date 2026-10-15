@@ -145,6 +145,13 @@ const employeeSchema = z.object({
   email:z.string().email().max(254).optional().or(z.literal('')),
   branch:z.string().trim().min(1).max(100).default('Principal')
 });
+const userSchema = z.object({
+  name:z.string().trim().min(2).max(160),
+  email:z.string().trim().email().max(254).transform(v=>v.toLowerCase()),
+  password:z.string().min(14).max(200),
+  role:z.enum(['admin','supervisor','worker']),
+  employeeId:z.string().uuid().optional()
+});
 const eventSchema = z.object({
   employeeId:z.string().uuid(),
   eventType:z.enum(['clock_in','clock_out']),
@@ -159,6 +166,21 @@ app.get('/api/me', authenticate, (req,res) => res.json({user:req.user}));
 app.get('/api/company', authenticate, (req,res) => {
   const company = db.prepare('SELECT id,name,created_at AS createdAt FROM companies WHERE id=?').get(req.user.companyId);
   res.json({company});
+});
+app.post('/api/users', authenticate, roles('admin'), (req,res,next) => {
+  try {
+    const input=userSchema.parse(req.body);
+    if (input.role==='worker' && !input.employeeId) throw appError(400,'La cuenta de trabajador debe asociarse a un empleado.');
+    if (input.employeeId) {
+      const employee=db.prepare('SELECT id FROM employees WHERE id=? AND company_id=?').get(input.employeeId,req.user.companyId);
+      if (!employee) throw appError(404,'Empleado no encontrado en esta empresa.');
+    }
+    const id=randomUUID(), created=now();
+    db.prepare('INSERT INTO users(id,company_id,name,email,password_hash,role,employee_id,created_at) VALUES(?,?,?,?,?,?,?,?)')
+      .run(id,req.user.companyId,input.name,input.email,bcrypt.hashSync(input.password,12),input.role,input.employeeId||null,created);
+    writeAudit(req.user.companyId,req.user.id,'user.created','user',id,{role:input.role,employeeId:input.employeeId||null});
+    res.status(201).json({user:{id,name:input.name,email:input.email,role:input.role,employeeId:input.employeeId||null,createdAt:created}});
+  } catch(e) { next(e); }
 });
 app.get('/api/employees', authenticate, (req,res) => {
   const rows = db.prepare('SELECT id,employee_number AS employeeNumber,full_name AS fullName,email,branch,active,created_at AS createdAt FROM employees WHERE company_id=? ORDER BY full_name').all(req.user.companyId);
