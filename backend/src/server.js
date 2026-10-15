@@ -116,8 +116,11 @@ const loginSchema = z.object({ email: z.string().email().max(254), password: z.s
 app.post('/api/auth/login', (req,res,next) => {
   try {
     const input = loginSchema.parse(req.body);
-    const user = db.prepare('SELECT * FROM users WHERE email=? AND active=1 ORDER BY created_at LIMIT 1').get(input.email.toLowerCase());
-    if (!user || !bcrypt.compareSync(input.password, user.password_hash)) throw appError(401, 'Credenciales incorrectas.');
+    const candidates = db.prepare('SELECT * FROM users WHERE email=? AND active=1').all(input.email.toLowerCase());
+    const matches = candidates.filter(candidate => bcrypt.compareSync(input.password, candidate.password_hash));
+    // Evita autenticar de forma ambigua si una misma dirección existe en varias empresas.
+    if (matches.length !== 1) throw appError(401, 'Credenciales incorrectas o cuenta ambigua. Usa un correo único por usuario.'); 
+    const user = matches[0];
     const token = jwt.sign({ sub:user.id, companyId:user.company_id, role:user.role }, JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '20m', issuer:'asistia-api', audience:'asistia-client' });
     writeAudit(user.company_id,user.id,'auth.login','user',user.id,{});
     res.json({ token, tokenType:'Bearer', expiresIn:process.env.JWT_EXPIRES_IN || '20m', user:{id:user.id,name:user.name,email:user.email,role:user.role,companyId:user.company_id} });
@@ -185,8 +188,10 @@ app.post('/api/attendance/events', authenticate, (req,res,next) => {
     const employee = db.prepare('SELECT id,active FROM employees WHERE id=? AND company_id=?').get(input.employeeId,req.user.companyId);
     if (!employee || !employee.active) throw appError(404,'Empleado no encontrado o inactivo.');
     if (req.user.role === 'worker' && req.user.employeeId !== input.employeeId) throw appError(403,'Solo puedes registrar tu propia asistencia.');
-    const occurredAt = input.occurredAt || now();
+    if (req.user.role === 'worker' && input.occurredAt) throw appError(400,'El trabajador no puede elegir la hora del evento; se utiliza la hora del servidor.');
+    const occurredAt = req.user.role === 'worker' ? now() : (input.occurredAt || now());
     const last = db.prepare('SELECT event_type,occurred_at FROM attendance_events WHERE company_id=? AND employee_id=? ORDER BY occurred_at DESC, rowid DESC LIMIT 1').get(req.user.companyId,input.employeeId);
+    if (!last && input.eventType === 'clock_out') throw appError(409,'No existe una entrada pendiente de salida.');
     if (last?.event_type === input.eventType) throw appError(409,input.eventType === 'clock_in' ? 'Ya existe una entrada sin salida.' : 'No existe una entrada pendiente de salida.');
     if (last && Date.parse(occurredAt) < Date.parse(last.occurred_at)) throw appError(409,'La fecha no puede ser anterior al último evento. Solicita una corrección trazable.');
     const event = db.transaction(() => {
@@ -263,7 +268,12 @@ app.get('/api/reports/attendance.csv', authenticate, roles('admin','supervisor')
   const rows=db.prepare(`SELECT p.employee_number,p.full_name,p.branch,e.event_type,e.occurred_at,e.received_at,e.source,e.event_hash
     FROM attendance_events e JOIN employees p ON p.id=e.employee_id WHERE e.company_id=? AND e.occurred_at>=? AND e.occurred_at<=? ORDER BY p.full_name,e.occurred_at`)
     .all(req.user.companyId,from.toISOString(),to.toISOString());
-  const cell=v => '"' + String(v ?? '').replaceAll('"','""') + '"';
+  const cell=v => {
+    let value=String(v ?? '');
+    // Mitiga ejecución de fórmulas cuando el CSV se abre en hojas de cálculo.
+    if (/^[\\s]*[=+@-]/.test(value)) value="'"+value;
+    return '"' + value.replaceAll('"','""') + '"';
+  };
   const csv=['numero_empleado,nombre,sucursal,tipo_evento,fecha_evento,fecha_recepcion,origen,hash',...rows.map(r=>[r.employee_number,r.full_name,r.branch,r.event_type,r.occurred_at,r.received_at,r.source,r.event_hash].map(cell).join(','))].join('\r\n');
   res.setHeader('Content-Type','text/csv; charset=utf-8');
   res.setHeader('Content-Disposition','attachment; filename="asistia-registros.csv"');
