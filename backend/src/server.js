@@ -140,7 +140,8 @@ function assertValidEffectiveTimeline(companyId, employeeId, eventId, proposedTi
   const timeline = rows.map(row => ({...row, effective_time: row.id === eventId ? proposedTime : row.effective_time}))
     .sort((a,b) => Date.parse(a.effective_time)-Date.parse(b.effective_time) || a.rowid-b.rowid);
   let previous = null;
-  for (const row of timeline) {
+  for (const [index, row] of timeline.entries()) {
+    if (index === 0 && row.event_type !== 'clock_in') throw appError(409, 'La cronología debe comenzar con una entrada; esta corrección rompería la secuencia.');
     if (previous && Date.parse(row.effective_time) <= Date.parse(previous.effective_time)) {
       throw appError(409, 'La corrección produciría dos eventos con la misma hora o fuera de orden.');
     }
@@ -440,11 +441,13 @@ app.post('/api/agreements', authenticate, roles('admin','supervisor'), (req,res,
 app.get('/api/reports/attendance.csv', authenticate, roles('admin','supervisor'), (req,res,next) => {
   try {
   const {from,to}=parseDateRange(req.query);
+  const totalRows=db.prepare(`SELECT COUNT(*) AS total FROM attendance_events e LEFT JOIN attendance_adjustments a ON a.id=(SELECT aa.id FROM attendance_adjustments aa WHERE aa.original_event_id=e.id ORDER BY aa.rowid DESC LIMIT 1) WHERE e.company_id=? AND COALESCE(a.adjusted_time,e.occurred_at)>=? AND COALESCE(a.adjusted_time,e.occurred_at)<=?`).get(req.user.companyId,from.toISOString(),to.toISOString()).total;
+  if (totalRows > 10000) throw appError(400,'La exportación supera 10,000 registros; acota el rango de fechas.');
   const rows=db.prepare(`SELECT p.employee_number,p.full_name,p.branch,e.event_type,e.occurred_at,e.received_at,e.source,e.event_hash,
     a.adjusted_time,a.reason AS adjustment_reason,a.adjustment_hash
     FROM attendance_events e JOIN employees p ON p.id=e.employee_id
     LEFT JOIN attendance_adjustments a ON a.id=(SELECT aa.id FROM attendance_adjustments aa WHERE aa.original_event_id=e.id ORDER BY aa.rowid DESC LIMIT 1)
-    WHERE e.company_id=? AND COALESCE(a.adjusted_time,e.occurred_at)>=? AND COALESCE(a.adjusted_time,e.occurred_at)<=? ORDER BY p.full_name,COALESCE(a.adjusted_time,e.occurred_at) LIMIT 10000`)
+    WHERE e.company_id=? AND COALESCE(a.adjusted_time,e.occurred_at)>=? AND COALESCE(a.adjusted_time,e.occurred_at)<=? ORDER BY p.full_name,COALESCE(a.adjusted_time,e.occurred_at)`)
     .all(req.user.companyId,from.toISOString(),to.toISOString());
   const cell=v => {
     let value=String(v ?? '');
