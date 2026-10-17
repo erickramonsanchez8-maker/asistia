@@ -147,4 +147,17 @@ test('administrador puede crear cuenta de trabajador vinculada a empleado',async
     token:adminToken,method:'POST',body:{decision:'approved'}
   });
   assert.equal(selfReview.status,403);
+
+  // Las horas con offset se guardan normalizadas a UTC.
+  const thirdEmployee=await request('/api/employees',{token:adminToken,method:'POST',body:{
+    employeeNumber:'QA-003',fullName:'Empleado con zona horaria',branch:'Principal'
+  }});
+  assert.equal(thirdEmployee.status,201,JSON.stringify(thirdEmployee.data));
+  const instant=Date.now()-30_000;
+  const offsetTime=new Date(instant-6*60*60*1000).toISOString().replace('Z','-06:00');
+  const offsetEvent=await request('/api/attendance/events',{token:adminToken,method:'POST',body:{
+    employeeId:thirdEmployee.data.employee.id,eventType:'clock_in',occurredAt:offsetTime
+  }});
+  assert.equal(offsetEvent.status,201,JSON.stringify(offsetEvent.data));
+  assert.ok(offsetEvent.data.event.occurred_at.endsWith('Z'));
 });
