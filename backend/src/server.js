@@ -59,6 +59,18 @@ CREATE TABLE IF NOT EXISTS correction_requests (
     CHECK(status IN ('pending','approved','rejected')),
   reviewed_by TEXT REFERENCES users(id), reviewed_at TEXT, created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS attendance_adjustments (
+  id TEXT PRIMARY KEY, company_id TEXT NOT NULL REFERENCES companies(id),
+  correction_request_id TEXT NOT NULL UNIQUE REFERENCES correction_requests(id),
+  original_event_id TEXT NOT NULL REFERENCES attendance_events(id),
+  employee_id TEXT NOT NULL REFERENCES employees(id),
+  event_type TEXT NOT NULL CHECK(event_type IN ('clock_in','clock_out')),
+  original_time TEXT NOT NULL, adjusted_time TEXT NOT NULL, reason TEXT NOT NULL,
+  approved_by TEXT NOT NULL REFERENCES users(id), created_at TEXT NOT NULL,
+  previous_hash TEXT, adjustment_hash TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_adjustments_company_employee_time
+  ON attendance_adjustments(company_id, employee_id, adjusted_time);
 CREATE TABLE IF NOT EXISTS agreements (
   id TEXT PRIMARY KEY, company_id TEXT NOT NULL REFERENCES companies(id),
   employee_id TEXT NOT NULL REFERENCES employees(id), version TEXT NOT NULL,
@@ -306,8 +318,10 @@ app.post('/api/attendance/corrections', authenticate, (req,res,next) => {
   } catch(e) { next(e); }
 });
 app.get('/api/attendance/corrections', authenticate, roles('admin','supervisor'), (req,res) => {
-  const corrections=db.prepare(`SELECT c.id,c.event_id AS eventId,c.requested_by AS requestedBy,c.reason,c.proposed_time AS proposedTime,c.status,c.reviewed_by AS reviewedBy,c.reviewed_at AS reviewedAt,c.created_at AS createdAt
-  FROM correction_requests c WHERE c.company_id=? ORDER BY c.created_at DESC`).all(req.user.companyId);
+  const corrections=db.prepare(`SELECT c.id,c.event_id AS eventId,c.requested_by AS requestedBy,c.reason,c.proposed_time AS proposedTime,c.status,c.reviewed_by AS reviewedBy,c.reviewed_at AS reviewedAt,c.created_at AS createdAt,
+    a.id AS adjustmentId,a.adjusted_time AS adjustedTime,a.original_time AS originalTime,a.adjustment_hash AS adjustmentHash
+  FROM correction_requests c LEFT JOIN attendance_adjustments a ON a.correction_request_id=c.id
+  WHERE c.company_id=? ORDER BY c.created_at DESC`).all(req.user.companyId);
   res.json({corrections});
 });
 app.post('/api/attendance/corrections/:id/review', authenticate, roles('admin','supervisor'), (req,res,next) => {
@@ -317,13 +331,25 @@ app.post('/api/attendance/corrections/:id/review', authenticate, roles('admin','
     if (!row) throw appError(404,'Solicitud no encontrada.');
     if (row.status!=='pending') throw appError(409,'La solicitud ya fue revisada.');
     if (row.requested_by === req.user.id) throw appError(403,'No puedes revisar tu propia solicitud de corrección.');
+    const original=db.prepare('SELECT id,employee_id,event_type,occurred_at FROM attendance_events WHERE id=? AND company_id=?').get(row.event_id,req.user.companyId);
+    if (!original) throw appError(409,'El registro original ya no está disponible; no se puede aplicar el ajuste.');
+    let adjustment=null;
     db.transaction(() => {
-      db.prepare('UPDATE correction_requests SET status=?,reviewed_by=?,reviewed_at=? WHERE id=?').run(input.decision,req.user.id,now(),row.id);
-      writeAudit(req.user.companyId,req.user.id,'attendance.correction_reviewed','correction_request',row.id,{decision:input.decision,originalEventId:row.event_id,proposedTime:row.proposed_time});
-      // El evento original jamás se modifica. La aprobación queda como decisión trazable;
-      // un futuro flujo de enmienda debe crear un evento compensatorio vinculado al original.
+      const reviewedAt=now();
+      db.prepare('UPDATE correction_requests SET status=?,reviewed_by=?,reviewed_at=? WHERE id=?').run(input.decision,req.user.id,reviewedAt,row.id);
+      if (input.decision==='approved') {
+        const id=randomUUID();
+        const previousHash=db.prepare('SELECT adjustment_hash FROM attendance_adjustments WHERE company_id=? ORDER BY rowid DESC LIMIT 1').get(req.user.companyId)?.adjustment_hash || null;
+        const createdAt=now();
+        const payload={id,companyId:req.user.companyId,correctionRequestId:row.id,originalEventId:original.id,employeeId:original.employee_id,eventType:original.event_type,originalTime:original.occurred_at,adjustedTime:new Date(row.proposed_time).toISOString(),reason:row.reason,approvedBy:req.user.id,createdAt,prev:previousHash};
+        const adjustmentHash=createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+        db.prepare(`INSERT INTO attendance_adjustments(id,company_id,correction_request_id,original_event_id,employee_id,event_type,original_time,adjusted_time,reason,approved_by,created_at,previous_hash,adjustment_hash)
+          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(id,req.user.companyId,row.id,original.id,original.employee_id,original.event_type,original.occurred_at,payload.adjustedTime,row.reason,req.user.id,createdAt,previousHash,adjustmentHash);
+        adjustment={id,originalEventId:original.id,eventType:original.event_type,originalTime:original.occurred_at,adjustedTime:payload.adjustedTime,adjustmentHash};
+      }
+      writeAudit(req.user.companyId,req.user.id,'attendance.correction_reviewed','correction_request',row.id,{decision:input.decision,originalEventId:row.event_id,proposedTime:row.proposed_time,adjustmentId:adjustment?.id||null,adjustmentHash:adjustment?.adjustmentHash||null});
     })();
-    res.json({id:row.id,status:input.decision,originalRecordPreserved:true});
+    res.json({id:row.id,status:input.decision,originalRecordPreserved:true,adjustment});
   } catch(e) { next(e); }
 });
 app.post('/api/agreements', authenticate, roles('admin','supervisor'), (req,res,next) => {
