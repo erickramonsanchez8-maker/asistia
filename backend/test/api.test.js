@@ -5,6 +5,8 @@ import { createServer } from 'node:net';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import Database from 'better-sqlite3';
+import bcrypt from 'bcryptjs';
 import { fileURLToPath } from 'node:url';
 
 const backendDir=fileURLToPath(new URL('..',import.meta.url));
@@ -78,6 +80,35 @@ test('health check y autenticación',async()=>{
   assert.equal(badPage.status,400);
   const tooWide=await request('/api/attendance/events?from=2024-01-01T00:00:00Z&to=2026-10-17T00:00:00Z',{token:adminToken});
   assert.equal(tooWide.status,400);
+});
+
+test('el aislamiento por empresa bloquea consultas y escrituras cruzadas',async()=>{
+  const companyId='00000000-0000-4000-8000-000000000002';
+  const userId='00000000-0000-4000-8000-000000000003';
+  const employeeId='00000000-0000-4000-8000-000000000004';
+  const created=new Date().toISOString();
+  const direct=new Database(join(tempDir,'test.sqlite'));
+  try {
+    direct.pragma('foreign_keys = ON');
+    direct.prepare('INSERT INTO companies(id,name,created_at) VALUES(?,?,?)').run(companyId,'Otra empresa',created);
+    direct.prepare('INSERT INTO users(id,company_id,name,email,password_hash,role,created_at) VALUES(?,?,?,?,?,?,?)')
+      .run(userId,companyId,'Admin ajeno','otro-admin@test.example',bcrypt.hashSync('Password-ajeno-seguro-12345',10),'admin',created);
+    direct.prepare('INSERT INTO employees(id,company_id,employee_number,full_name,branch,created_at) VALUES(?,?,?,?,?,?)')
+      .run(employeeId,companyId,'AJENO-001','Empleado ajeno','Otra sucursal',created);
+  } finally { direct.close(); }
+  const employees=await request('/api/employees',{token:adminToken});
+  assert.equal(employees.status,200);
+  assert.ok(employees.data.employees.every(e=>e.id!==employeeId));
+  const crossEvent=await request('/api/attendance/events',{token:adminToken,method:'POST',body:{employeeId,eventType:'clock_in'}});
+  assert.equal(crossEvent.status,404);
+  const crossDeactivate=await request('/api/users/'+userId+'/deactivate',{token:adminToken,method:'PATCH'});
+  assert.equal(crossDeactivate.status,404);
+  const foreignLogin=await request('/api/auth/login',{method:'POST',body:{email:'otro-admin@test.example',password:'Password-ajeno-seguro-12345'}});
+  assert.equal(foreignLogin.status,200);
+  const foreignEmployees=await request('/api/employees',{token:foreignLogin.data.token});
+  assert.equal(foreignEmployees.status,200);
+  assert.equal(foreignEmployees.data.employees.length,1);
+  assert.equal(foreignEmployees.data.employees[0].id,employeeId);
 });
 
 test('eventos de asistencia respetan la secuencia entrada/salida y conservan el original',async()=>{
