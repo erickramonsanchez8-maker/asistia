@@ -2035,6 +2035,8 @@ function viewCompliance(){
  ${db.employees.length?`<form id="compAgreementForm">
  <div class="field"><label>Persona trabajadora</label><select name="employeeId" required><option value="">Selecciona trabajador</option>${db.employees.filter(e=>e.active).map(e=>`<option value="${escapeHtml(e.id)}">${escapeHtml(employeeName(e))} · ${escapeHtml(e.employeeNumber||e.id)}</option>`).join("")}</select></div>
  <div class="field"><label>Nombre completo escrito por la persona trabajadora *</label><input name="employeeTypedName" required autocomplete="off" placeholder="Debe coincidir con el expediente"></div>
+ <div class="field"><label>Domicilio de la persona empleadora *</label><input name="employerAddress" required placeholder="Calle, número, municipio y estado"></div>
+ <div class="field"><label>Centro de trabajo / sucursal *</label><input name="workplace" required placeholder="Ubicación del centro de trabajo"></div>
  <div class="field"><label>Representante de la persona empleadora y cargo *</label><input name="employerRep" required value="${escapeHtml(db.company.adminName||"")}" placeholder="Nombre y cargo"></div>
  <div class="field"><label>Contacto de privacidad / solicitudes ARCO *</label><input name="privacyContact" required placeholder="Correo o domicilio"></div>
  <div class="field"><label>Aviso de privacidad integral (URL o ubicación) *</label><input name="privacyUrl" required placeholder="Liga o ubicación del aviso"></div>
@@ -2067,6 +2069,8 @@ Versión: ASISTIA-JORNADA-1.0
 Fecha y hora: ${a.acceptedAt}
 
 PERSONA EMPLEADORA: ${db.company.name}
+DOMICILIO DE LA PERSONA EMPLEADORA: ${a.employerAddress}
+CENTRO DE TRABAJO / SUCURSAL: ${a.workplace}
 REPRESENTANTE Y CARGO: ${a.employerRep}
 PERSONA TRABAJADORA: ${a.employeeName}
 NÚMERO DE EMPLEADO: ${(empById(a.employeeId)||{}).employeeNumber||"No indicado"}
@@ -2119,14 +2123,16 @@ function bindCompliance(){
   if(!emp||!emp.active){toast("Selecciona una persona trabajadora activa.","err");return;}
   const employeeTypedName=String(fd.get("employeeTypedName")||"").trim();
   if(fold(employeeTypedName)!==fold(employeeName(emp))){toast("El nombre escrito debe coincidir con el expediente del trabajador.","err");return;}
+  const employerAddress=String(fd.get("employerAddress")||"").trim();
+  const workplace=String(fd.get("workplace")||"").trim();
   const employerRep=String(fd.get("employerRep")||"").trim();
   const privacyContact=String(fd.get("privacyContact")||"").trim();
   const privacyUrl=String(fd.get("privacyUrl")||"").trim();
   const retention=String(fd.get("retention")||"").trim();
   const fallbackChannel=String(fd.get("fallbackChannel")||"").trim();
-  if(!employerRep||!privacyContact||!privacyUrl||!retention||!fallbackChannel){toast("Completa representante, privacidad, conservación y canal alternativo.","err");return;}
+  if(!employerAddress||!workplace||!employerRep||!privacyContact||!privacyUrl||!retention||!fallbackChannel){toast("Completa domicilio, centro de trabajo, representante, privacidad, conservación y canal alternativo.","err");return;}
   if(!Array.isArray(db.complianceAgreements))db.complianceAgreements=[];
-  const a={id:uid("agr"),employeeId:emp.id,employeeName:employeeName(emp),version:"ASISTIA-JORNADA-1.0",acceptedAt:nowIso(),recordedBy:adminSessionName()||db.company.adminName||"administrador",method:"Constancia local; identidad verificada por el responsable; no sustituye firma electrónica",employeeTypedName,employerRep,privacyContact,privacyUrl,retention,fallbackChannel};
+  const a={id:uid("agr"),employeeId:emp.id,employeeName:employeeName(emp),version:"ASISTIA-JORNADA-1.0",acceptedAt:nowIso(),recordedBy:adminSessionName()||db.company.adminName||"administrador",method:"Constancia local; identidad verificada por el responsable; no sustituye firma electrónica",employeeTypedName,employerAddress,workplace,employerRep,privacyContact,privacyUrl,retention,fallbackChannel};
   a.agreementText=buildAgreementText(a);
   a.evidenceHash=await sha256(JSON.stringify({id:a.id,employeeId:a.employeeId,version:a.version,agreementText:a.agreementText,acceptedAt:a.acceptedAt,recordedBy:a.recordedBy,method:a.method}));
   db.complianceAgreements.push(a);
