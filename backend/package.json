@@ -1,8 +1,8 @@
 {
   "name": "asistia-backend",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
-  "description": "API inicial de ASISTIA 0.2 para asistencia laboral con trazabilidad",
+  "description": "API de ASISTIA con controles de seguridad, trazabilidad y respaldos cifrados",
   "type": "module",
   "engines": {
     "node": ">=20"
@@ -12,7 +12,9 @@
     "dev": "node --watch src/server.js",
     "test": "node --test",
     "db:check": "node src/check-db.js",
-    "integrity:check": "node src/verify-integrity.js"
+    "integrity:check": "node src/verify-integrity.js",
+    "backup:create": "node src/backup-db.js",
+    "backup:restore": "node src/restore-db.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
