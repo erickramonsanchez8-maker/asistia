@@ -222,6 +222,18 @@ test('administrador puede crear cuenta de trabajador vinculada a empleado',async
   assert.equal(listedCorrections.status,200);
   assert.equal(listedCorrections.data.pagination.total,1);
   assert.equal(listedCorrections.data.corrections.find(c=>c.id===correction.data.correction.id).adjustmentId,reviewed.data.adjustment.id);
+  // La aprobación no puede invertir una entrada/salida ni producir una cronología inválida.
+  const existingEvents=(await request('/api/attendance/events',{token:adminToken})).data.events;
+  const qaEntry=existingEvents.find(e=>e.employeeNumber==='QA-001' && e.eventType==='clock_in');
+  assert.ok(qaEntry);
+  const invalidTimeline=await request('/api/attendance/corrections',{token:adminToken,method:'POST',body:{
+    eventId:qaEntry.id,reason:'Prueba de validación de secuencia temporal',proposedTime:new Date(Date.now()+60000).toISOString()
+  }});
+  assert.equal(invalidTimeline.status,201,JSON.stringify(invalidTimeline.data));
+  const invalidApproval=await request('/api/attendance/corrections/'+invalidTimeline.data.correction.id+'/review',{
+    token:supervisorLogin.data.token,method:'POST',body:{decision:'approved'}
+  });
+  assert.equal(invalidApproval.status,409,JSON.stringify(invalidApproval.data));
   const csv=await request('/api/reports/attendance.csv',{token:adminToken});
   assert.equal(csv.status,200);
   assert.match(csv.data,/fecha_ajustada/);
