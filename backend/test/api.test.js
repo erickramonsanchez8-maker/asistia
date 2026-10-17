@@ -238,6 +238,8 @@ test('administrador puede crear cuenta de trabajador vinculada a empleado',async
   assert.equal(csv.status,200);
   assert.match(csv.data,/fecha_ajustada/);
   assert.ok(csv.data.includes(reviewed.data.adjustment.adjustedTime));
+  const adjustedExit=await request('/api/attendance/events',{token:adminToken,method:'POST',body:{employeeId:otherId,eventType:'clock_out'}});
+  assert.equal(adjustedExit.status,201,JSON.stringify(adjustedExit.data));
   const agreement=await request('/api/agreements',{token:adminToken,method:'POST',body:{employeeId:employee.id,version:'1.0',statement:'Acepto el uso del registro electrónico de asistencia conforme al aviso entregado.',method:'paper_reference'}});
   assert.equal(agreement.status,201,JSON.stringify(agreement.data));
   const agreementList=await request('/api/agreements?limit=1',{token:supervisorLogin.data.token});
@@ -259,6 +261,13 @@ test('administrador puede crear cuenta de trabajador vinculada a empleado',async
   }});
   assert.equal(offsetEvent.status,201,JSON.stringify(offsetEvent.data));
   assert.ok(offsetEvent.data.event.occurred_at.endsWith('Z'));
+  const worker3=await request('/api/users',{token:adminToken,method:'POST',body:{name:'Trabajador tercero',email:'worker3@test.example',password:'Worker3-seguro-123456',role:'worker',employeeId:thirdEmployee.data.employee.id}});
+  assert.equal(worker3.status,201,JSON.stringify(worker3.data));
+  const worker3Login=await request('/api/auth/login',{method:'POST',body:{email:'worker3@test.example',password:'Worker3-seguro-123456'}});
+  assert.equal(worker3Login.status,200);
+  const employeeDeactivate=await request('/api/employees/'+thirdEmployee.data.employee.id+'/deactivate',{token:adminToken,method:'PATCH'});
+  assert.equal(employeeDeactivate.status,200,JSON.stringify(employeeDeactivate.data));
+  assert.equal((await request('/api/me',{token:worker3Login.data.token})).status,401);
 
   const passwordChange=await request('/api/auth/change-password',{token:adminToken,method:'POST',body:{
     currentPassword:'Password-seguro-12345',newPassword:'Password-nuevo-seguro-67890'
