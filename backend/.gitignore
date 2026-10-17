@@ -5,3 +5,4 @@ data/
 *.sqlite-wal
 node_modules/
 coverage/
+backups/
