@@ -12,8 +12,3 @@ test('la huella cambia cuando cambia el contenido del evento', () => {
   const hash=x=>createHash('sha256').update(JSON.stringify(x)).digest('hex');
   assert.notEqual(hash(base),hash({...base,occurredAt:'2026-10-15T08:01:00.000Z'}));
 });
-
-test('el secreto JWT de prueba cumple la longitud mínima de configuración', () => {
-  const secret='test-secret-which-is-at-least-32-characters-long';
-  assert.ok(secret.length >= 32);
-});
