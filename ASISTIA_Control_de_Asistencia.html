@@ -2018,14 +2018,34 @@ function viewBackup(){
 function viewCompliance(){
  const agreements=Array.isArray(db.complianceAgreements)?db.complianceAgreements:[];
  const result=checkDataConsistency();
- return `<div class="page-head"><div><p class="brand-eyebrow">ASISTIA / CONTROL DOCUMENTAL</p><h2>Preparación para cumplimiento laboral</h2><p class="hint">Constancias, consistencia de registros y exportación de evidencia.</p></div></div>
- <div class="warn-banner">Esta versión conserva datos en el navegador. Este módulo no certifica cumplimiento legal ni sustituye las disposiciones de la STPS, la revisión jurídica o una base de datos centralizada.</div>
- <div class="card"><h3>Constancia del procedimiento de registro</h3><p class="hint">Esta constancia documenta una captura administrativa. No equivale por sí sola a firma electrónica ni prueba de forma independiente la identidad del trabajador.</p>
- ${db.employees.length?`<form id="compAgreementForm"><div class="field"><label>Trabajador</label><select name="employeeId" required><option value="">Selecciona trabajador</option>${db.employees.map(e=>`<option value="${escapeHtml(e.id)}">${escapeHtml(employeeName(e))} · ${escapeHtml(e.employeeNumber||e.id)}</option>`).join("")}</select></div><div class="field"><label>Procedimiento explicado</label><textarea name="agreementText" rows="4" required>Tuve acceso a la explicación del procedimiento de registro electrónico de inicio y finalización de jornada, la consulta de marcajes y el mecanismo para solicitar la revisión de datos incorrectos. Esta constancia no limita derechos laborales ni sustituye un acuerdo jurídico específico.</textarea></div><label class="check"><input type="checkbox" name="confirm" required> Confirmo que se registra con conocimiento del trabajador y que su identidad fue verificada por el responsable.</label><div class="toolbar"><button class="btn btn-primary" type="submit">Guardar constancia</button></div></form>`:`<p class="hint">Primero registra trabajadores en Empleados.</p>`}</div>
- <div class="card"><h3>Expediente y verificación</h3><p class="hint">Constancias guardadas: ${agreements.length} · Eventos de auditoría: ${db.audit.length}</p><div class="toolbar"><button class="btn btn-primary" id="compExport">Exportar expediente con huella</button><button class="btn btn-ghost" id="compVerify">Verificar consistencia</button></div>
+ return `<div class="page-head"><div><p class="brand-eyebrow">ASISTIA / CONTROL DOCUMENTAL</p><h2>Acuerdo de uso del registro electrónico de jornada</h2><p class="hint">Información, aceptación y copia individual para cada persona trabajadora.</p></div></div>
+ <div class="warn-banner"><b>Importante:</b> este módulo guarda constancias únicamente en el almacenamiento local de este navegador. No las envía a un servidor ni acredita por sí solo la identidad o validez de una firma electrónica. Para un expediente probatorio, verifica identidad, entrega copia, conserva la firma de ambas partes y respalda el JSON.</div>
+ <div class="card"><h3>Información que debe conocer la persona trabajadora</h3>
+ <details><summary style="cursor:pointer;font-weight:700;color:var(--navy);padding:8px 0">Leer el acuerdo completo antes de aceptar</summary>
+ <div class="article" style="padding-top:12px">
+ <h4>I. Objeto y funcionamiento</h4><p>ASISTIA se utiliza para registrar y consultar eventos de inicio y fin de jornada, administrar incidencias y solicitudes de corrección y generar reportes de asistencia. La persona trabajadora debe registrar personalmente sus marcas, cuidar sus credenciales y no marcar por otra persona. El sistema puede guardar fecha/hora del evento, hora de recepción, empleado, sucursal, tipo de evento y trazas de seguridad según la modalidad y configuración.</p>
+ <h4>II. Correcciones y fallas</h4><p>Si falta una marca, hay un error o el sistema falla, la persona trabajadora debe reportarlo por el canal alternativo que se indique. Las solicitudes de corrección deben incluir el registro, la hora propuesta y la razón. Deben revisarse por una persona autorizada distinta de quien solicita el cambio. El registro original y la decisión deben conservar trazabilidad; no se borrarán silenciosamente datos anteriores.</p>
+ <h4>III. Uso de la información</h4><p>Los registros se utilizan para administrar asistencia y jornada, atender aclaraciones, preparar reportes y cumplir obligaciones legales o requerimientos de autoridad. Una marca no elimina el derecho de la persona trabajadora a explicar una incidencia ni determina por sí sola todas las consecuencias laborales.</p>
+ <h4>IV. Datos personales</h4><p>Se podrán tratar datos de identificación y laborales, registros de entrada/salida, solicitudes de corrección y trazas técnicas. La empresa debe informar quién es el responsable, finalidades, medios para limitar el uso, contacto para derechos ARCO, conservación y cambios al aviso de privacidad. Esta plantilla no contempla reconocimiento facial, huellas ni otros datos biométricos; si se planean utilizar, se requiere evaluación y aviso específico antes de activarlos. El acceso debe limitarse al personal autorizado y el tratamiento debe contar con medidas de seguridad apropiadas.</p>
+ <h4>V. Seguridad y derechos</h4><p>La persona trabajadora debe proteger sus credenciales y reportar accesos sospechosos. La persona empleadora debe administrar permisos, proteger los accesos administrativos y mantener respaldos y procedimientos de continuidad. Sellos de tiempo o hashes pueden ayudar a detectar cambios, pero no garantizan por sí solos que el sistema sea inalterable. La persona trabajadora conserva sus derechos laborales, de privacidad y de defensa, incluidos los derechos ARCO conforme a la ley.</p>
+ <h4>VI. Acuerdo laboral</h4><p>Las partes hacen constar que conocen el funcionamiento descrito y acuerdan utilizar el registro electrónico de jornada conforme a la legislación aplicable, incluido el artículo 132, fracción XXXIV, de la Ley Federal del Trabajo, cuando resulte aplicable. Este documento no implica renuncia a salarios, descansos, privacidad ni otros derechos irrenunciables. Los cambios materiales de finalidad o de sistema deben comunicarse y documentarse.</p>
+ <h4>VII. Constancia</h4><p>La persona trabajadora declara que tuvo oportunidad de leer, preguntar y recibir copia. La aceptación en esta aplicación es una constancia local de lectura y acuerdo; no sustituye una firma autógrafa o electrónica válida ni la revisión jurídica. La empresa debe completar los datos de privacidad y validar este documento antes de usarlo.</p>
+ </div></details></div>
+ <div class="card"><h3>Registrar lectura y acuerdo</h3><p class="hint">Completa estos datos con la persona trabajadora presente. La copia descargada incluye el texto y los datos que se muestran abajo.</p>
+ ${db.employees.length?`<form id="compAgreementForm">
+ <div class="field"><label>Persona trabajadora</label><select name="employeeId" required><option value="">Selecciona trabajador</option>${db.employees.filter(e=>e.active).map(e=>`<option value="${escapeHtml(e.id)}">${escapeHtml(employeeName(e))} · ${escapeHtml(e.employeeNumber||e.id)}</option>`).join("")}</select></div>
+ <div class="field"><label>Nombre completo escrito por la persona trabajadora *</label><input name="employeeTypedName" required autocomplete="off" placeholder="Debe coincidir con el expediente"></div>
+ <div class="field"><label>Representante de la persona empleadora y cargo *</label><input name="employerRep" required value="${escapeHtml(db.company.adminName||"")}" placeholder="Nombre y cargo"></div>
+ <div class="field"><label>Contacto de privacidad / solicitudes ARCO *</label><input name="privacyContact" required placeholder="Correo o domicilio"></div>
+ <div class="field"><label>Aviso de privacidad integral (URL o ubicación) *</label><input name="privacyUrl" required placeholder="Liga o ubicación del aviso"></div>
+ <div class="field"><label>Plazo o criterio de conservación de datos *</label><input name="retention" required placeholder="Plazo definido conforme a obligaciones legales"></div>
+ <div class="field"><label>Canal alternativo para fallas y correcciones *</label><textarea name="fallbackChannel" rows="2" required placeholder="Correo, teléfono, responsable y horario"></textarea></div>
+ <label class="check"><input type="checkbox" name="confirm" required> Confirmo que la persona trabajadora leyó el acuerdo, tuvo oportunidad de preguntar, conoce el aviso de privacidad y los canales de aclaración, y manifiesta su acuerdo con el método de registro. La identidad se verificó por el responsable. Entiendo que no se renuncia a derechos laborales ni de privacidad.</label>
+ <div class="toolbar"><button class="btn btn-primary" type="submit">Guardar constancia y descargar copia</button></div></form>`:`<p class="hint">Primero registra trabajadores en Empleados.</p>`}</div>
+ <div class="card"><h3>Expediente y verificación</h3><p class="hint">Constancias locales: ${agreements.length} · Eventos de auditoría: ${db.audit.length}</p><div class="toolbar"><button class="btn btn-primary" id="compExport">Exportar expediente con huella</button><button class="btn btn-ghost" id="compVerify">Verificar consistencia</button></div>
  ${result.ok?`<div class="info-banner">No se detectaron inconsistencias básicas en identificadores y fechas revisados.</div>`:`<div class="warn-banner"><b>Observaciones:</b><ul>${result.errors.map(e=>`<li>${escapeHtml(e)}</li>`).join("")}</ul></div>`}
- ${agreements.length?`<div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Trabajador</th><th>Versión</th><th>Capturó</th></tr></thead><tbody>${agreements.slice().reverse().map(a=>`<tr><td>${escapeHtml(formatDateShort(zoned(a.acceptedAt).date))} ${escapeHtml(formatTime(a.acceptedAt))}</td><td>${escapeHtml(a.employeeName)}</td><td>${escapeHtml(a.version)}</td><td>${escapeHtml(a.recordedBy)}</td></tr>`).join("")}</tbody></table></div>`:`<p class="hint">Aún no hay constancias.</p>`}</div>
- <div class="card"><h3>Pendientes para una solución robusta</h3><ul><li>Base de datos centralizada, autenticación y permisos en servidor.</li><li>Respaldos independientes y restauración probada.</li><li>Historial protegido contra alteraciones y conservación de originales.</li><li>Validación jurídica del acuerdo y de cómo acreditar su aceptación.</li><li>Revisión de las disposiciones generales aplicables de la STPS.</li></ul><p class="hint">Estas medidas de infraestructura no pueden implementarse de forma real dentro de un HTML autónomo que solo utiliza localStorage.</p></div>`;
+ ${agreements.length?`<div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Trabajador</th><th>Versión</th><th>Capturó</th><th>Copia</th></tr></thead><tbody>${agreements.slice().reverse().map(a=>`<tr><td>${escapeHtml(formatDateShort(zoned(a.acceptedAt).date))} ${escapeHtml(formatTime(a.acceptedAt))}</td><td>${escapeHtml(a.employeeName)}</td><td>${escapeHtml(a.version)}</td><td>${escapeHtml(a.recordedBy)}</td><td><button class="btn btn-ghost btn-sm" data-agreement-download="${escapeHtml(a.id)}">Descargar</button></td></tr>`).join("")}</tbody></table></div>`:`<p class="hint">Aún no hay constancias.</p>`}</div>
+ <div class="card"><h3>Antes de utilizarlo con personal</h3><ul><li>Completar y validar el aviso de privacidad integral.</li><li>Verificar el procedimiento real y los canales de aclaración.</li><li>Entregar copia a la persona trabajadora y conservar la firmada por ambas partes.</li><li>Exportar respaldos y probar restauración. Esta versión no centraliza ni sincroniza constancias.</li><li>Obtener revisión jurídica laboral y de protección de datos en México.</li></ul><p class="hint">La referencia principal es el artículo 132, fracción XXXIV, de la LFT y la Ley Federal de Protección de Datos Personales en Posesión de los Particulares vigentes.</p></div>`;
 }
 function checkDataConsistency(){
  const errors=[];
@@ -2041,9 +2061,79 @@ async function exportComplianceEvidence(){
  downloadBlob(JSON.stringify(out,null,2),"ASISTIA_Expediente_"+safeName(db.company.name)+"_"+todayIso()+".json","application/json;charset=utf-8");
  audit("export_expediente","Expediente exportado; SHA-256: "+(digest||"no disponible"));saveDb();toast(digest?"Expediente exportado con huella SHA-256.":"Expediente exportado sin huella criptográfica.",digest?"ok":"");
 }
+function buildAgreementText(a){
+ return `ACUERDO DE USO DEL REGISTRO ELECTRÓNICO DE JORNADA LABORAL — ASISTIA
+Versión: ASISTIA-JORNADA-1.0
+Fecha y hora: ${a.acceptedAt}
+
+PERSONA EMPLEADORA: ${db.company.name}
+REPRESENTANTE Y CARGO: ${a.employerRep}
+PERSONA TRABAJADORA: ${a.employeeName}
+NÚMERO DE EMPLEADO: ${(empById(a.employeeId)||{}).employeeNumber||"No indicado"}
+
+1. OBJETO Y FUNCIONAMIENTO
+Las partes acuerdan utilizar ASISTIA para registrar y consultar eventos de inicio y fin de jornada, administrar incidencias y solicitudes de corrección y generar reportes de asistencia. La persona trabajadora debe registrar personalmente sus marcas, proteger sus credenciales y no marcar por otra persona. El sistema puede guardar fecha/hora del evento, hora de recepción, identificador de empleado, sucursal, tipo de evento y trazas técnicas, según su modalidad.
+
+2. CORRECCIONES Y FALLAS
+Las faltas de marca, errores o fallas deben reportarse por el canal alternativo indicado abajo. Las solicitudes deben identificar el registro, la hora propuesta y la razón, y revisarlas una persona autorizada distinta de quien solicita el cambio. Deben conservarse el registro original, la solicitud, la decisión y la trazabilidad del ajuste; no se deben borrar silenciosamente registros anteriores.
+
+3. FINALIDADES
+Los registros se utilizarán para administrar asistencia y jornada, atender aclaraciones, preparar reportes y cumplir obligaciones legales o requerimientos de autoridad. Una marca no elimina el derecho de la persona trabajadora a explicar una incidencia ni determina por sí sola todas las consecuencias laborales.
+
+4. DATOS PERSONALES
+Los datos tratados pueden incluir identificación y datos laborales, registros de entrada/salida, solicitudes de corrección y trazas de seguridad. El acceso se limitará al personal autorizado. Esta plantilla no contempla reconocimiento facial, huellas ni otros datos biométricos; si se prevén, requieren evaluación y aviso específico antes de activarlos.
+Aviso de privacidad integral: ${a.privacyUrl}
+Contacto de privacidad / derechos ARCO: ${a.privacyContact}
+Plazo o criterio de conservación: ${a.retention}
+Canal alternativo para fallas y correcciones: ${a.fallbackChannel}
+
+5. SEGURIDAD Y DERECHOS
+La persona trabajadora protegerá sus credenciales y reportará accesos sospechosos. La persona empleadora administrará permisos y medidas de seguridad, y mantendrá respaldos y continuidad. Los sellos de tiempo y hashes pueden ayudar a detectar cambios, pero no garantizan por sí solos que un sistema sea inalterable. Se conservan los derechos laborales, de privacidad y de defensa, incluidos los derechos ARCO conforme a la ley.
+
+6. FUNDAMENTO Y ACUERDO
+Las partes declaran que conocen el funcionamiento descrito y acuerdan utilizar el registro electrónico de jornada conforme a la legislación aplicable, incluido el artículo 132, fracción XXXIV, de la Ley Federal del Trabajo, cuando resulte aplicable. Este acuerdo no implica renuncia a salarios, descansos, privacidad ni otros derechos irrenunciables. Los cambios materiales deberán comunicarse y documentarse.
+
+7. CONSTANCIA DE LECTURA
+La persona trabajadora declara que tuvo oportunidad de leer, preguntar y recibir copia, y manifiesta su acuerdo con el método de registro descrito.
+Nombre escrito por la persona trabajadora: ${a.employeeTypedName}
+Representante de la persona empleadora: ${a.employerRep}
+Fecha/hora de constancia: ${a.acceptedAt}
+Identificador: ${a.id}
+
+FIRMA DE LA PERSONA TRABAJADORA: ______________________________________
+FIRMA DE LA PERSONA EMPLEADORA / REPRESENTANTE: ________________________
+
+NOTA LEGAL: Esta constancia se conserva en el almacenamiento local del navegador y no prueba por sí sola la identidad ni la validez de una firma electrónica. La empresa debe entregar copia, conservar la constancia firmada por ambas partes y revisar el aviso de privacidad. El documento no sustituye asesoría jurídica.`;
+}
+function downloadAgreementCopy(a){
+ const text=buildAgreementText(a);
+ const html=`<!doctype html><html lang="es-MX"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ASISTIA · Constancia de acuerdo</title><style>body{font:14px/1.6 Arial,sans-serif;color:#17263b;max-width:850px;margin:30px auto;padding:0 22px}header{border-bottom:3px solid #10243d;padding-bottom:14px}h1{font-size:24px}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.6 Arial,sans-serif}button{padding:10px 14px;background:#10243d;color:#fff;border:0;border-radius:8px;cursor:pointer}@media print{button{display:none}body{margin:0;max-width:none}@page{size:A4;margin:16mm}}</style></head><body><header><p style="letter-spacing:.14em;color:#148a98;font-weight:bold">ASISTIA · CONTROL DE JORNADA</p><h1>Constancia individual de acuerdo</h1><p>Conserve esta copia y complete las firmas de ambas partes.</p></header><p><button onclick="window.print()">Imprimir / Guardar como PDF</button></p><pre>${escapeHtml(text)}</pre></body></html>`;
+ downloadBlob(html,`ASISTIA_Acuerdo_${safeName(a.employeeName)}_${String(a.acceptedAt).slice(0,10)}.html`,"text/html;charset=utf-8");
+}
 function bindCompliance(){
  const form=document.getElementById("compAgreementForm");
- if(form)form.onsubmit=(e)=>{e.preventDefault();const fd=new FormData(form);if(!fd.get("confirm"))return;const emp=empById(String(fd.get("employeeId")||""));if(!emp){toast("Selecciona un trabajador válido.","err");return;}const textValue=String(fd.get("agreementText")||"").trim();if(!textValue){toast("El texto no puede quedar vacío.","err");return;}if(!Array.isArray(db.complianceAgreements))db.complianceAgreements=[];const a={id:uid("agr"),employeeId:emp.id,employeeName:employeeName(emp),version:"ASISTIA-JORNADA-1.0",agreementText:textValue,acceptedAt:nowIso(),recordedBy:adminSessionName()||db.company.adminName||"administrador",method:"Captura administrativa; identidad verificada por el responsable",notice:"Constancia local, no equivale por sí sola a firma electrónica."};db.complianceAgreements.push(a);audit("constancia_jornada","Constancia registrada para "+a.employeeName+"; versión "+a.version);if(saveDb()){toast("Constancia guardada localmente; conserva evidencia de aceptación.","ok");renderAdmin();}};
+ if(form)form.onsubmit=async(e)=>{
+  e.preventDefault();const fd=new FormData(form);
+  if(!fd.get("confirm")){toast("La persona trabajadora debe confirmar la lectura.","err");return;}
+  const emp=empById(String(fd.get("employeeId")||""));
+  if(!emp||!emp.active){toast("Selecciona una persona trabajadora activa.","err");return;}
+  const employeeTypedName=String(fd.get("employeeTypedName")||"").trim();
+  if(fold(employeeTypedName)!==fold(employeeName(emp))){toast("El nombre escrito debe coincidir con el expediente del trabajador.","err");return;}
+  const employerRep=String(fd.get("employerRep")||"").trim();
+  const privacyContact=String(fd.get("privacyContact")||"").trim();
+  const privacyUrl=String(fd.get("privacyUrl")||"").trim();
+  const retention=String(fd.get("retention")||"").trim();
+  const fallbackChannel=String(fd.get("fallbackChannel")||"").trim();
+  if(!employerRep||!privacyContact||!privacyUrl||!retention||!fallbackChannel){toast("Completa representante, privacidad, conservación y canal alternativo.","err");return;}
+  if(!Array.isArray(db.complianceAgreements))db.complianceAgreements=[];
+  const a={id:uid("agr"),employeeId:emp.id,employeeName:employeeName(emp),version:"ASISTIA-JORNADA-1.0",acceptedAt:nowIso(),recordedBy:adminSessionName()||db.company.adminName||"administrador",method:"Constancia local; identidad verificada por el responsable; no sustituye firma electrónica",employeeTypedName,employerRep,privacyContact,privacyUrl,retention,fallbackChannel};
+  a.agreementText=buildAgreementText(a);
+  a.evidenceHash=await sha256(JSON.stringify({id:a.id,employeeId:a.employeeId,version:a.version,agreementText:a.agreementText,acceptedAt:a.acceptedAt,recordedBy:a.recordedBy,method:a.method}));
+  db.complianceAgreements.push(a);
+  audit("constancia_jornada","Constancia de acuerdo registrada para "+a.employeeName+"; versión "+a.version+"; hash "+a.evidenceHash);
+  if(saveDb()){downloadAgreementCopy(a);toast("Constancia guardada localmente y copia descargada. Obtén las firmas de ambas partes.","ok");renderAdmin();}
+ };
+ document.querySelectorAll("[data-agreement-download]").forEach(b=>b.onclick=()=>{const a=(db.complianceAgreements||[]).find(x=>x.id===b.dataset.agreementDownload);if(a)downloadAgreementCopy(a);});
  const ex=document.getElementById("compExport");if(ex)ex.onclick=()=>exportComplianceEvidence();
  const ve=document.getElementById("compVerify");if(ve)ve.onclick=()=>{const r=checkDataConsistency();if(r.ok)toast("Sin inconsistencias básicas detectadas.","ok");else modal("<h3>Observaciones</h3><ul>"+r.errors.map(x=>"<li>"+escapeHtml(x)+"</li>").join("")+"</ul><button class='btn btn-primary' id='closeIntegrity'>Cerrar</button>");const c=document.getElementById("closeIntegrity");if(c)c.onclick=closeModal;};
 }
