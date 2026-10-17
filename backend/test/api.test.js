@@ -157,6 +157,29 @@ test('administrador puede crear cuenta de trabajador vinculada a empleado',async
   });
   assert.equal(selfReview.status,403);
 
+  // Una persona distinta revisa la solicitud; el original se conserva y se crea un ajuste enlazado.
+  const supervisorCreated=await request('/api/users',{token:adminToken,method:'POST',body:{
+    name:'Supervisor QA',email:'supervisor@test.example',password:'Supervisor-seguro-12345',role:'supervisor'
+  }});
+  assert.equal(supervisorCreated.status,201,JSON.stringify(supervisorCreated.data));
+  const supervisorLogin=await request('/api/auth/login',{method:'POST',body:{
+    email:'supervisor@test.example',password:'Supervisor-seguro-12345'
+  }});
+  assert.equal(supervisorLogin.status,200,JSON.stringify(supervisorLogin.data));
+  const originalBefore=(await request('/api/attendance/events',{token:adminToken})).data.events.find(e=>e.id===otherEntry.data.event.id);
+  const reviewed=await request('/api/attendance/corrections/'+correction.data.correction.id+'/review',{
+    token:supervisorLogin.data.token,method:'POST',body:{decision:'approved'}
+  });
+  assert.equal(reviewed.status,200,JSON.stringify(reviewed.data));
+  assert.equal(reviewed.data.status,'approved');
+  assert.equal(reviewed.data.originalRecordPreserved,true);
+  assert.equal(reviewed.data.adjustment.originalEventId,otherEntry.data.event.id);
+  assert.ok(reviewed.data.adjustment.adjustmentHash);
+  const originalAfter=(await request('/api/attendance/events',{token:adminToken})).data.events.find(e=>e.id===otherEntry.data.event.id);
+  assert.equal(originalAfter.occurredAt,originalBefore.occurredAt);
+  const listedCorrections=await request('/api/attendance/corrections',{token:supervisorLogin.data.token});
+  assert.equal(listedCorrections.data.corrections.find(c=>c.id===correction.data.correction.id).adjustmentId,reviewed.data.adjustment.id);
+
   // Las horas con offset se guardan normalizadas a UTC.
   const thirdEmployee=await request('/api/employees',{token:adminToken,method:'POST',body:{
     employeeNumber:'QA-003',fullName:'Empleado con zona horaria',branch:'Principal'
