@@ -152,7 +152,7 @@ const employeeSchema = z.object({
   employeeNumber:z.string().trim().min(1).max(40),
   fullName:z.string().trim().min(2).max(160),
   email:z.string().email().max(254).optional().or(z.literal('')),
-  rfc:z.string().trim().toUpperCase().regex(/^[A-Z&Ñ]{3,4}\\d{6}[A-Z0-9]{3}$/, 'RFC inválido: usa 3 o 4 letras, 6 dígitos y 3 caracteres finales.').optional().or(z.literal('')),
+  rfc:z.string().trim().toUpperCase().regex(/^[A-Z&Ñ]{3,4}\d{6}[A-Z0-9]{3}$/, 'RFC inválido: usa 3 o 4 letras, 6 dígitos y 3 caracteres finales.').optional().or(z.literal('')),
   branch:z.string().trim().min(1).max(100).default('Principal')
 });
 const userSchema = z.object({
