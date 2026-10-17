@@ -173,6 +173,8 @@ app.get('/api/company', authenticate, (req,res) => {
 app.post('/api/users', authenticate, roles('admin'), (req,res,next) => {
   try {
     const input=userSchema.parse(req.body);
+    // El login solo recibe correo y contraseña: evita crear nuevas ambigüedades entre empresas.
+    if (db.prepare('SELECT 1 FROM users WHERE email=? COLLATE NOCASE LIMIT 1').get(input.email)) throw appError(409,'El correo ya está registrado. Cada cuenta debe usar un correo único.');
     if (input.role==='worker' && !input.employeeId) throw appError(400,'La cuenta de trabajador debe asociarse a un empleado.');
     if (input.employeeId) {
       const employee=db.prepare('SELECT id FROM employees WHERE id=? AND company_id=?').get(input.employeeId,req.user.companyId);
