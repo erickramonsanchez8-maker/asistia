@@ -164,4 +164,19 @@ test('administrador puede crear cuenta de trabajador vinculada a empleado',async
   }});
   assert.equal(offsetEvent.status,201,JSON.stringify(offsetEvent.data));
   assert.ok(offsetEvent.data.event.occurred_at.endsWith('Z'));
+
+  const passwordChange=await request('/api/auth/change-password',{token:adminToken,method:'POST',body:{
+    currentPassword:'Password-seguro-12345',newPassword:'Password-nuevo-seguro-67890'
+  }});
+  assert.equal(passwordChange.status,200,JSON.stringify(passwordChange.data));
+  assert.equal((await request('/api/me',{token:adminToken})).status,401);
+  const relogin=await request('/api/auth/login',{method:'POST',body:{
+    email:'admin@test.example',password:'Password-nuevo-seguro-67890'
+  }});
+  assert.equal(relogin.status,200,JSON.stringify(relogin.data));
+  adminToken=relogin.data.token;
+
+  const deactivate=await request('/api/users/'+workerLogin.data.user.id+'/deactivate',{token:adminToken,method:'PATCH'});
+  assert.equal(deactivate.status,200,JSON.stringify(deactivate.data));
+  assert.equal((await request('/api/me',{token:workerToken})).status,401);
 });
