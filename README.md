@@ -4,7 +4,7 @@ Sistema de control de asistencia. La versión actual conserva el HTML existente 
 
 ## Versiones
 - **Interfaz heredada:** `ASISTIA_Control_de_Asistencia.html`; mantiene sus funciones y almacenamiento local.
-- **API 0.2 (experimental):** Node.js + Express + SQLite, autenticación JWT, roles, separación por empresa, empleados, eventos de asistencia, solicitudes de corrección, cambio de contraseña con revocación de sesiones, desactivación de usuarios, constancias, bitácora y reporte CSV.
+- **API 0.2 (experimental):** Node.js + Express + SQLite, autenticación JWT, roles, separación por empresa, expedientes de empleados con RFC validado, eventos de asistencia, solicitudes de corrección, cambio de contraseña con revocación de sesiones, desactivación de usuarios, constancias, bitácora y reporte CSV.
 
 ## Estado de la versión 0.2
 La API se encuentra en etapa inicial. La interfaz HTML todavía no está conectada a ella; son dos vías separadas hasta completar integración y pruebas. No migres datos reales ni retires el flujo anterior sin probar respaldo, restauración y reconciliación.
