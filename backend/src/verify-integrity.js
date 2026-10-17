@@ -19,6 +19,16 @@ try {
     expectedEventPrev.set(row.company_id,row.event_hash);
   }
 
+  const expectedAdjustmentPrev=new Map();
+  for (const row of db.prepare('SELECT rowid,* FROM attendance_adjustments ORDER BY rowid').iterate()) {
+    const prev=expectedAdjustmentPrev.get(row.company_id) || null;
+    if ((row.previous_hash || null)!==prev) fail('attendance_adjustments',row.id,'previous_hash no coincide con el ajuste anterior.');
+    const payload={id:row.id,companyId:row.company_id,correctionRequestId:row.correction_request_id,originalEventId:row.original_event_id,employeeId:row.employee_id,eventType:row.event_type,originalTime:row.original_time,adjustedTime:row.adjusted_time,reason:row.reason,approvedBy:row.approved_by,createdAt:row.created_at,prev:row.previous_hash || null};
+    const hash=createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+    if (hash!==row.adjustment_hash) fail('attendance_adjustments',row.id,'adjustment_hash no coincide con el contenido almacenado.');
+    expectedAdjustmentPrev.set(row.company_id,row.adjustment_hash);
+  }
+
   const expectedAuditPrev=new Map();
   for (const row of db.prepare('SELECT rowid,* FROM audit_log ORDER BY rowid').iterate()) {
     const prev=expectedAuditPrev.get(row.company_id) || null;
