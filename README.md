@@ -17,6 +17,7 @@ Requisitos: Node.js 20+.
 ```bash
 cd backend
 npm install
+npm test
 ```
 
 Copia `.env.example` a `.env`, cambia `JWT_SECRET` por un valor aleatorio de al menos 32 caracteres y configura `BOOTSTRAP_ADMIN_EMAIL` y una contraseña de al menos 14 caracteres. No uses las credenciales de ejemplo en producción.
@@ -26,6 +27,8 @@ npm start
 ```
 
 Verifica `http://127.0.0.1:3000/api/health`. La API escucha solo en localhost por defecto. No se incluye hosting, dominio, certificados HTTPS ni base de datos remota.
+
+Para comprobar las cadenas de hashes de asistencia y auditoría sobre la base configurada en `DATABASE_PATH`, ejecuta `npm run integrity:check` desde `backend/`. El comando informa inconsistencias; no repara ni modifica registros. Si despliegas detrás de un proxy, configura `TRUST_PROXY_HOPS` solo con el número exacto de proxies confiables.
 
 ## Seguridad y cumplimiento
 El proyecto contiene controles de seguridad iniciales, no una certificación. Antes de producción hacen falta pruebas de extremo a extremo, revisión independiente, HTTPS, secretos gestionados, respaldos externos cifrados y restauración probada, gestión de sesiones, protección contra abuso, privacidad y validación jurídica. Los hashes detectan algunas alteraciones, pero no vuelven inalterable un equipo o archivo bajo control de un administrador. El registro de acuerdos no equivale por sí solo a una firma electrónica válida ni demuestra automáticamente cumplimiento de la LFT.
