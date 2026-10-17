@@ -157,7 +157,7 @@ app.use(cors({
   origin(origin, cb) {
     const allowed = (process.env.CORS_ORIGIN || 'http://localhost:5173').split(',').map(s => s.trim());
     if (!origin || allowed.includes(origin)) return cb(null, true);
-    return cb(new Error('Origen no autorizado por CORS.'));
+    return cb(Object.assign(new Error('Origen no autorizado por CORS.'), { status: 403 }));
   },
   methods: ['GET','POST','PATCH','OPTIONS'],
   allowedHeaders: ['Content-Type','Authorization']
@@ -220,7 +220,14 @@ const eventSchema = z.object({
 const correctionSchema = z.object({ eventId:z.string().uuid(), reason:z.string().trim().min(8).max(1000), proposedTime:z.string().datetime({offset:true}) });
 const agreementSchema = z.object({ employeeId:z.string().uuid(), version:z.string().trim().min(1).max(40), statement:z.string().trim().min(10).max(3000), method:z.enum(['in_person','paper_reference','electronic_acknowledgement','other']) });
 
-app.get('/api/health', (req,res) => res.json({status:'ok',service:'ASISTIA API',version:'0.3.0',time:now()}));
+app.get('/api/health', (req,res) => {
+  try {
+    db.prepare('SELECT 1 AS ready').get();
+    res.json({status:'ok',database:'ok',service:'ASISTIA API',version:'0.3.0',time:now()});
+  } catch {
+    res.status(503).json({status:'error',database:'unavailable',service:'ASISTIA API',version:'0.3.0',time:now()});
+  }
+});
 app.get('/api/me', authenticate, (req,res) => res.json({user:req.user}));
 app.get('/api/company', authenticate, (req,res) => {
   const company = db.prepare('SELECT id,name,created_at AS createdAt FROM companies WHERE id=?').get(req.user.companyId);
@@ -324,10 +331,16 @@ app.post('/api/employees', authenticate, roles('admin','supervisor'), (req,res,n
 });
 app.patch('/api/employees/:id/deactivate', authenticate, roles('admin'), (req,res,next) => {
   try {
-    const result = db.prepare('UPDATE employees SET active=0 WHERE id=? AND company_id=?').run(req.params.id,req.user.companyId);
-    if (!result.changes) throw appError(404,'Empleado no encontrado.');
-    writeAudit(req.user.companyId,req.user.id,'employee.deactivated','employee',req.params.id,{});
-    res.json({ok:true});
+    const employee=db.prepare('SELECT id FROM employees WHERE id=? AND company_id=?').get(req.params.id,req.user.companyId);
+    if (!employee) throw appError(404,'Empleado no encontrado.');
+    db.transaction(() => {
+      db.prepare('UPDATE employees SET active=0 WHERE id=? AND company_id=?').run(req.params.id,req.user.companyId);
+      const linkedUsers=db.prepare("SELECT id,role FROM users WHERE employee_id=? AND company_id=? AND active=1").all(req.params.id,req.user.companyId);
+      db.prepare('UPDATE users SET active=0,token_version=token_version+1 WHERE employee_id=? AND company_id=? AND active=1').run(req.params.id,req.user.companyId);
+      for (const linked of linkedUsers) writeAudit(req.user.companyId,req.user.id,'user.deactivated_with_employee','user',linked.id,{role:linked.role,employeeId:req.params.id});
+      writeAudit(req.user.companyId,req.user.id,'employee.deactivated','employee',req.params.id,{linkedUsersDeactivated:linkedUsers.length});
+    })();
+    res.json({ok:true,linkedAccountsDeactivated:true});
   } catch(e) { next(e); }
 });
 app.post('/api/attendance/events', authenticate, (req,res,next) => {
@@ -341,7 +354,8 @@ app.post('/api/attendance/events', authenticate, (req,res,next) => {
     const timeDeltaMs = Date.parse(occurredAt) - Date.now();
     if (timeDeltaMs > 5 * 60 * 1000) throw appError(400,'La hora del evento no puede superar en más de 5 minutos la hora del servidor.');
     if (req.user.role !== 'worker' && input.occurredAt && Math.abs(timeDeltaMs) > 5 * 60 * 1000) throw appError(400,'Los registros manuales deben estar dentro de una ventana de 5 minutos. Para otros horarios, solicita una corrección trazable.');
-    const last = db.prepare('SELECT event_type,occurred_at FROM attendance_events WHERE company_id=? AND employee_id=? ORDER BY occurred_at DESC, rowid DESC LIMIT 1').get(req.user.companyId,input.employeeId);
+    const last = db.prepare(`SELECT e.event_type,COALESCE((SELECT aa.adjusted_time FROM attendance_adjustments aa WHERE aa.original_event_id=e.id ORDER BY aa.rowid DESC LIMIT 1),e.occurred_at) AS occurred_at
+      FROM attendance_events e WHERE e.company_id=? AND e.employee_id=? ORDER BY COALESCE((SELECT aa.adjusted_time FROM attendance_adjustments aa WHERE aa.original_event_id=e.id ORDER BY aa.rowid DESC LIMIT 1),e.occurred_at) DESC,e.rowid DESC LIMIT 1`).get(req.user.companyId,input.employeeId);
     if (!last && input.eventType === 'clock_out') throw appError(409,'No existe una entrada pendiente de salida.');
     if (last?.event_type === input.eventType) throw appError(409,input.eventType === 'clock_in' ? 'Ya existe una entrada sin salida.' : 'No existe una entrada pendiente de salida.');
     if (last && Date.parse(occurredAt) < Date.parse(last.occurred_at)) throw appError(409,'La fecha no puede ser anterior al último evento. Solicita una corrección trazable.');
