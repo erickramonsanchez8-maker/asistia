@@ -7,7 +7,7 @@ Sistema de control de asistencia. La versión actual conserva el HTML existente 
 - **API 0.2 (experimental):** Node.js + Express + SQLite, autenticación JWT, roles, separación por empresa, expedientes de empleados con RFC validado, eventos de asistencia, solicitudes de corrección con ajustes aprobados trazables, cambio de contraseña con revocación de sesiones, desactivación de usuarios, constancias, bitácora y reporte CSV.
 
 ## Estado de la versión 0.2
-La API se encuentra en etapa inicial. La interfaz HTML todavía no está conectada a ella; son dos vías separadas hasta completar integración y pruebas. No migres datos reales ni retires el flujo anterior sin probar respaldo, restauración y reconciliación.
+La API se encuentra en etapa inicial. La interfaz HTML todavía no está conectada a ella; son dos vías separadas hasta completar integración y pruebas. El módulo Cumplimiento LFT permite generar constancias individuales y descargar una copia HTML, pero sus registros permanecen en localStorage. No migres datos reales ni retires el flujo anterior sin probar respaldo, restauración y reconciliación.
 
 Consulta [arquitectura y límites de ASISTIA 0.2](docs/ASISTIA_0.2_ARQUITECTURA.md), [modelo de datos](database/README.md) y la [plantilla de acuerdo de uso del registro electrónico de jornada](docs/ASISTIA_Acuerdo_Uso_Registro_Electronico.md).
 
@@ -16,7 +16,7 @@ Requisitos: Node.js 20+.
 
 ```bash
 cd backend
-npm install
+npm ci
 npm test
 ```
 
