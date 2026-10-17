@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS users (
 );
 CREATE TABLE IF NOT EXISTS employees (
   id TEXT PRIMARY KEY, company_id TEXT NOT NULL REFERENCES companies(id),
-  employee_number TEXT NOT NULL, full_name TEXT NOT NULL, email TEXT,
+  employee_number TEXT NOT NULL, full_name TEXT NOT NULL, email TEXT, rfc TEXT,
   branch TEXT NOT NULL DEFAULT 'Principal', active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL, UNIQUE(company_id,employee_number)
 );
@@ -75,6 +75,8 @@ CREATE INDEX IF NOT EXISTS idx_audit_company_time ON audit_log(company_id, creat
 `);
 // Migra bases creadas antes de token_version sin borrar ni recrear tablas.
 try { db.exec('ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0'); }
+catch (e) { if (!String(e.message).includes('duplicate column name')) throw e; }
+try { db.exec('ALTER TABLE employees ADD COLUMN rfc TEXT'); }
 catch (e) { if (!String(e.message).includes('duplicate column name')) throw e; }
 
 const now = () => new Date().toISOString();
@@ -150,6 +152,7 @@ const employeeSchema = z.object({
   employeeNumber:z.string().trim().min(1).max(40),
   fullName:z.string().trim().min(2).max(160),
   email:z.string().email().max(254).optional().or(z.literal('')),
+  rfc:z.string().trim().toUpperCase().regex(/^[A-Z&Ñ]{3,4}\\d{6}[A-Z0-9]{3}$/, 'RFC inválido: usa 3 o 4 letras, 6 dígitos y 3 caracteres finales.').optional().or(z.literal('')),
   branch:z.string().trim().min(1).max(100).default('Principal')
 });
 const userSchema = z.object({
@@ -228,18 +231,18 @@ app.get('/api/employees', authenticate, (req,res) => {
   // Los trabajadores solo pueden consultar su propio expediente.
   if (req.user.role === 'worker') {
     if (!req.user.employeeId) return res.json({employees:[]});
-    const employee = db.prepare('SELECT id,employee_number AS employeeNumber,full_name AS fullName,branch,active,created_at AS createdAt FROM employees WHERE id=? AND company_id=?').get(req.user.employeeId,req.user.companyId);
+    const employee = db.prepare('SELECT id,employee_number AS employeeNumber,full_name AS fullName,rfc,branch,active,created_at AS createdAt FROM employees WHERE id=? AND company_id=?').get(req.user.employeeId,req.user.companyId);
     return res.json({employees:employee ? [employee] : []});
   }
-  const rows = db.prepare('SELECT id,employee_number AS employeeNumber,full_name AS fullName,email,branch,active,created_at AS createdAt FROM employees WHERE company_id=? ORDER BY full_name').all(req.user.companyId);
+  const rows = db.prepare('SELECT id,employee_number AS employeeNumber,full_name AS fullName,email,rfc,branch,active,created_at AS createdAt FROM employees WHERE company_id=? ORDER BY full_name').all(req.user.companyId);
   res.json({employees:rows});
 });
 app.post('/api/employees', authenticate, roles('admin','supervisor'), (req,res,next) => {
   try {
     const input = employeeSchema.parse(req.body);
     const id = randomUUID(), created = now();
-    db.prepare('INSERT INTO employees(id,company_id,employee_number,full_name,email,branch,created_at) VALUES(?,?,?,?,?,?,?)')
-      .run(id,req.user.companyId,input.employeeNumber,input.fullName,input.email || null,input.branch,created);
+    db.prepare('INSERT INTO employees(id,company_id,employee_number,full_name,email,rfc,branch,created_at) VALUES(?,?,?,?,?,?,?,?)')
+      .run(id,req.user.companyId,input.employeeNumber,input.fullName,input.email || null,input.rfc || null,input.branch,created);
     writeAudit(req.user.companyId,req.user.id,'employee.created','employee',id,{employeeNumber:input.employeeNumber});
     res.status(201).json({employee:{id,...input,createdAt:created,active:1}});
   } catch(e) { next(e); }
