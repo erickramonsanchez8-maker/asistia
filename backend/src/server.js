@@ -226,6 +226,14 @@ app.get('/api/company', authenticate, (req,res) => {
   const company = db.prepare('SELECT id,name,created_at AS createdAt FROM companies WHERE id=?').get(req.user.companyId);
   res.json({company});
 });
+app.get('/api/users', authenticate, roles('admin'), (req,res,next) => {
+  try {
+    const {limit,offset}=parsePagination(req.query);
+    const total=db.prepare('SELECT COUNT(*) AS total FROM users WHERE company_id=?').get(req.user.companyId).total;
+    const users=db.prepare('SELECT id,name,email,role,employee_id AS employeeId,active,created_at AS createdAt FROM users WHERE company_id=? ORDER BY created_at DESC LIMIT ? OFFSET ?').all(req.user.companyId,limit,offset);
+    res.json({users,pagination:{limit,offset,total,hasMore:offset+users.length<total}});
+  } catch(e) { next(e); }
+});
 app.post('/api/users', authenticate, roles('admin'), (req,res,next) => {
   try {
     const input=userSchema.parse(req.body);
