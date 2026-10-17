@@ -297,8 +297,10 @@ app.get('/api/attendance/events', authenticate, (req,res,next) => {
     const to = req.query.to ? new Date(String(req.query.to)) : new Date();
     if (Number.isNaN(from.valueOf()) || Number.isNaN(to.valueOf()) || from > to) throw appError(400,'Rango de fechas inválido.');
     const rows = db.prepare(`SELECT e.id,e.employee_id AS employeeId,p.employee_number AS employeeNumber,p.full_name AS fullName,
-      e.event_type AS eventType,e.occurred_at AS occurredAt,e.received_at AS receivedAt,e.source,e.created_by AS createdBy,e.previous_hash AS previousHash,e.event_hash AS eventHash
+      e.event_type AS eventType,e.occurred_at AS occurredAt,e.received_at AS receivedAt,e.source,e.created_by AS createdBy,e.previous_hash AS previousHash,e.event_hash AS eventHash,
+      a.adjusted_time AS adjustedAt,a.reason AS adjustmentReason,a.adjustment_hash AS adjustmentHash
       FROM attendance_events e JOIN employees p ON p.id=e.employee_id
+      LEFT JOIN attendance_adjustments a ON a.id=(SELECT aa.id FROM attendance_adjustments aa WHERE aa.original_event_id=e.id ORDER BY aa.rowid DESC LIMIT 1)
       WHERE e.company_id=? AND e.occurred_at>=? AND e.occurred_at<=? AND (? IS NULL OR e.employee_id=?) ORDER BY e.occurred_at`)
       .all(req.user.companyId,from.toISOString(),to.toISOString(),req.user.role === 'worker' ? (req.user.employeeId || '__no_employee__') : null,req.user.role === 'worker' ? (req.user.employeeId || '__no_employee__') : null);
     res.json({events:rows,from:from.toISOString(),to:to.toISOString()});
@@ -369,8 +371,11 @@ app.get('/api/reports/attendance.csv', authenticate, roles('admin','supervisor')
   const from = req.query.from ? new Date(String(req.query.from)) : new Date(Date.now()-30*86400000);
   const to = req.query.to ? new Date(String(req.query.to)) : new Date();
   if (Number.isNaN(from.valueOf()) || Number.isNaN(to.valueOf()) || from > to) throw appError(400,'Rango de fechas inválido.');
-  const rows=db.prepare(`SELECT p.employee_number,p.full_name,p.branch,e.event_type,e.occurred_at,e.received_at,e.source,e.event_hash
-    FROM attendance_events e JOIN employees p ON p.id=e.employee_id WHERE e.company_id=? AND e.occurred_at>=? AND e.occurred_at<=? ORDER BY p.full_name,e.occurred_at`)
+  const rows=db.prepare(`SELECT p.employee_number,p.full_name,p.branch,e.event_type,e.occurred_at,e.received_at,e.source,e.event_hash,
+    a.adjusted_time,a.reason AS adjustment_reason,a.adjustment_hash
+    FROM attendance_events e JOIN employees p ON p.id=e.employee_id
+    LEFT JOIN attendance_adjustments a ON a.id=(SELECT aa.id FROM attendance_adjustments aa WHERE aa.original_event_id=e.id ORDER BY aa.rowid DESC LIMIT 1)
+    WHERE e.company_id=? AND e.occurred_at>=? AND e.occurred_at<=? ORDER BY p.full_name,e.occurred_at`)
     .all(req.user.companyId,from.toISOString(),to.toISOString());
   const cell=v => {
     let value=String(v ?? '');
@@ -378,7 +383,7 @@ app.get('/api/reports/attendance.csv', authenticate, roles('admin','supervisor')
     if (/^\s*[=+@\-]/.test(value)) value="'"+value;
     return '"' + value.replaceAll('"','""') + '"';
   };
-  const csv=['numero_empleado,nombre,sucursal,tipo_evento,fecha_evento,fecha_recepcion,origen,hash',...rows.map(r=>[r.employee_number,r.full_name,r.branch,r.event_type,r.occurred_at,r.received_at,r.source,r.event_hash].map(cell).join(','))].join('\r\n');
+  const csv=['numero_empleado,nombre,sucursal,tipo_evento,fecha_evento_original,fecha_ajustada,razon_ajuste,hash_ajuste,fecha_recepcion,origen,hash_original',...rows.map(r=>[r.employee_number,r.full_name,r.branch,r.event_type,r.occurred_at,r.adjusted_time,r.adjustment_reason,r.adjustment_hash,r.received_at,r.source,r.event_hash].map(cell).join(','))].join('\r\n');
   res.setHeader('Content-Type','text/csv; charset=utf-8');
   res.setHeader('Content-Disposition','attachment; filename="asistia-registros.csv"');
   res.send('\uFEFF'+csv);
