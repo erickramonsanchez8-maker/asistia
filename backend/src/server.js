@@ -335,8 +335,8 @@ app.patch('/api/employees/:id/deactivate', authenticate, roles('admin'), (req,re
     if (!employee) throw appError(404,'Empleado no encontrado.');
     db.transaction(() => {
       db.prepare('UPDATE employees SET active=0 WHERE id=? AND company_id=?').run(req.params.id,req.user.companyId);
-      const linkedUsers=db.prepare("SELECT id,role FROM users WHERE employee_id=? AND company_id=? AND active=1").all(req.params.id,req.user.companyId);
-      db.prepare('UPDATE users SET active=0,token_version=token_version+1 WHERE employee_id=? AND company_id=? AND active=1').run(req.params.id,req.user.companyId);
+      const linkedUsers=db.prepare("SELECT id,role FROM users WHERE employee_id=? AND company_id=? AND role='worker' AND active=1").all(req.params.id,req.user.companyId);
+      db.prepare('UPDATE users SET active=0,token_version=token_version+1 WHERE employee_id=? AND company_id=? AND role='worker' AND active=1').run(req.params.id,req.user.companyId);
       for (const linked of linkedUsers) writeAudit(req.user.companyId,req.user.id,'user.deactivated_with_employee','user',linked.id,{role:linked.role,employeeId:req.params.id});
       writeAudit(req.user.companyId,req.user.id,'employee.deactivated','employee',req.params.id,{linkedUsersDeactivated:linkedUsers.length});
     })();
