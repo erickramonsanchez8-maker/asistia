@@ -1,7 +1,7 @@
 name: ASISTIA backend checks
 on:
   push:
-    branches: [main, "feature/**"]
+    branches: [main, "feature/**", "fix/**"]
   pull_request:
     branches: [main]
 jobs:
@@ -15,5 +15,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - run: npm install
+      - run: npm ci
+      - run: npm audit --omit=dev
       - run: npm test
