@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS users (
   name TEXT NOT NULL, email TEXT NOT NULL, password_hash TEXT NOT NULL,
   role TEXT NOT NULL CHECK(role IN ('admin','supervisor','worker')),
   employee_id TEXT, active INTEGER NOT NULL DEFAULT 1,
+  token_version INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL, UNIQUE(company_id,email)
 );
 CREATE TABLE IF NOT EXISTS employees (
@@ -72,6 +73,9 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 CREATE INDEX IF NOT EXISTS idx_audit_company_time ON audit_log(company_id, created_at);
 `);
+// Migra bases creadas antes de token_version sin borrar ni recrear tablas.
+try { db.exec('ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0'); }
+catch (e) { if (!String(e.message).includes('duplicate column name')) throw e; }
 
 const now = () => new Date().toISOString();
 const audit = db.prepare(`INSERT INTO audit_log
@@ -124,7 +128,7 @@ app.post('/api/auth/login', (req,res,next) => {
     // Evita autenticar de forma ambigua si una misma dirección existe en varias empresas.
     if (matches.length !== 1) throw appError(401, 'Credenciales incorrectas o cuenta ambigua. Usa un correo único por usuario.'); 
     const user = matches[0];
-    const token = jwt.sign({ sub:user.id, companyId:user.company_id, role:user.role }, JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '20m', issuer:'asistia-api', audience:'asistia-client' });
+    const token = jwt.sign({ sub:user.id, companyId:user.company_id, role:user.role, tokenVersion:user.token_version }, JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '20m', issuer:'asistia-api', audience:'asistia-client' });
     writeAudit(user.company_id,user.id,'auth.login','user',user.id,{});
     res.json({ token, tokenType:'Bearer', expiresIn:process.env.JWT_EXPIRES_IN || '20m', user:{id:user.id,name:user.name,email:user.email,role:user.role,companyId:user.company_id} });
   } catch(e) { next(e); }
@@ -135,8 +139,8 @@ function authenticate(req,res,next) {
     const value = req.get('authorization') || '';
     if (!value.startsWith('Bearer ')) throw appError(401,'Se requiere un token Bearer.');
     const claims = jwt.verify(value.slice(7),JWT_SECRET,{issuer:'asistia-api',audience:'asistia-client'});
-    const user = db.prepare('SELECT id,company_id,name,email,role,employee_id,active FROM users WHERE id=?').get(claims.sub);
-    if (!user || !user.active || user.company_id !== claims.companyId) throw appError(401,'Sesión inválida o usuario inactivo.');
+    const user = db.prepare('SELECT id,company_id,name,email,role,employee_id,active,token_version FROM users WHERE id=?').get(claims.sub);
+    if (!user || !user.active || user.company_id !== claims.companyId || claims.tokenVersion !== user.token_version) throw appError(401,'Sesión inválida, revocada o usuario inactivo.');
     req.user = { id:user.id, companyId:user.company_id, name:user.name, email:user.email, role:user.role, employeeId:user.employee_id };
     next();
   } catch(e) { next(e.status ? e : appError(401,'Token inválido o vencido.')); }
