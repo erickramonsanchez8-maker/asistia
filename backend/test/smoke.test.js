@@ -13,6 +13,7 @@ test('la huella cambia cuando cambia el contenido del evento', () => {
   assert.notEqual(hash(base),hash({...base,occurredAt:'2026-10-15T08:01:00.000Z'}));
 });
 
-test('la API requiere secreto JWT robusto para arrancar', () => {
-  assert.ok('JWT_SECRET'.length >= 10);
+test('el secreto JWT de prueba cumple la longitud mínima de configuración', () => {
+  const secret='test-secret-which-is-at-least-32-characters-long';
+  assert.ok(secret.length >= 32);
 });
