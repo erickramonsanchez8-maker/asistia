@@ -11,7 +11,8 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "test": "node --test",
-    "db:check": "node src/check-db.js"
+    "db:check": "node src/check-db.js",
+    "integrity:check": "node src/verify-integrity.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
