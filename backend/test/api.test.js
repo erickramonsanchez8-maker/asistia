@@ -5,6 +5,8 @@ import { createServer } from 'node:net';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import Database from 'better-sqlite3';
+import bcrypt from 'bcryptjs';
 import { fileURLToPath } from 'node:url';
 
 const backendDir=fileURLToPath(new URL('..',import.meta.url));
@@ -71,9 +73,42 @@ after(async () => {
 test('health check y autenticación',async()=>{
   const health=await request('/api/health');
   assert.equal(health.status,200);
-  assert.equal(health.data.version,'0.2.0');
+  assert.equal(health.data.version,'0.3.0');
   assert.equal((await request('/api/me',{token:adminToken})).status,200);
   assert.equal((await request('/api/me')).status,401);
+  const badPage=await request('/api/employees?limit=999',{token:adminToken});
+  assert.equal(badPage.status,400);
+  const tooWide=await request('/api/attendance/events?from=2024-01-01T00:00:00Z&to=2026-10-17T00:00:00Z',{token:adminToken});
+  assert.equal(tooWide.status,400);
+});
+
+test('el aislamiento por empresa bloquea consultas y escrituras cruzadas',async()=>{
+  const companyId='00000000-0000-4000-8000-000000000002';
+  const userId='00000000-0000-4000-8000-000000000003';
+  const employeeId='00000000-0000-4000-8000-000000000004';
+  const created=new Date().toISOString();
+  const direct=new Database(join(tempDir,'test.sqlite'));
+  try {
+    direct.pragma('foreign_keys = ON');
+    direct.prepare('INSERT INTO companies(id,name,created_at) VALUES(?,?,?)').run(companyId,'Otra empresa',created);
+    direct.prepare('INSERT INTO users(id,company_id,name,email,password_hash,role,created_at) VALUES(?,?,?,?,?,?,?)')
+      .run(userId,companyId,'Admin ajeno','otro-admin@test.example',bcrypt.hashSync('Password-ajeno-seguro-12345',10),'admin',created);
+    direct.prepare('INSERT INTO employees(id,company_id,employee_number,full_name,branch,created_at) VALUES(?,?,?,?,?,?)')
+      .run(employeeId,companyId,'AJENO-001','Empleado ajeno','Otra sucursal',created);
+  } finally { direct.close(); }
+  const employees=await request('/api/employees',{token:adminToken});
+  assert.equal(employees.status,200);
+  assert.ok(employees.data.employees.every(e=>e.id!==employeeId));
+  const crossEvent=await request('/api/attendance/events',{token:adminToken,method:'POST',body:{employeeId,eventType:'clock_in'}});
+  assert.equal(crossEvent.status,404);
+  const crossDeactivate=await request('/api/users/'+userId+'/deactivate',{token:adminToken,method:'PATCH'});
+  assert.equal(crossDeactivate.status,404);
+  const foreignLogin=await request('/api/auth/login',{method:'POST',body:{email:'otro-admin@test.example',password:'Password-ajeno-seguro-12345'}});
+  assert.equal(foreignLogin.status,200);
+  const foreignEmployees=await request('/api/employees',{token:foreignLogin.data.token});
+  assert.equal(foreignEmployees.status,200);
+  assert.equal(foreignEmployees.data.employees.length,1);
+  assert.equal(foreignEmployees.data.employees[0].id,employeeId);
 });
 
 test('eventos de asistencia respetan la secuencia entrada/salida y conservan el original',async()=>{
@@ -85,6 +120,10 @@ test('eventos de asistencia respetan la secuencia entrada/salida y conservan el 
   const employeeId=employeeResponse.data.employee.id;
   const employeeList=await request('/api/employees',{token:adminToken});
   assert.equal(employeeList.data.employees.find(e=>e.id===employeeId).rfc,'SALL061201ABC');
+  const firstPage=await request('/api/employees?limit=1&offset=0',{token:adminToken});
+  assert.equal(firstPage.status,200);
+  assert.equal(firstPage.data.employees.length,1);
+  assert.equal(firstPage.data.pagination.total,1);
   const invalidRfc=await request('/api/employees',{token:adminToken,method:'POST',body:{employeeNumber:'QA-RFC-BAD',fullName:'RFC inválido',rfc:'ABC123',branch:'Principal'}});
   assert.equal(invalidRfc.status,400);
   const invalidExit=await request('/api/attendance/events',{token:adminToken,method:'POST',body:{employeeId,eventType:'clock_out'}});
@@ -149,7 +188,7 @@ test('administrador puede crear cuenta de trabajador vinculada a empleado',async
   assert.equal(future.status,400);
 
   const correction=await request('/api/attendance/corrections',{token:adminToken,method:'POST',body:{
-    eventId:otherEntry.data.event.id,reason:'Verificar registro capturado por error',proposedTime:'2026-10-17T08:00:00-06:00'
+    eventId:otherEntry.data.event.id,reason:'Verificar registro capturado por error',proposedTime:new Date(Date.now()-120000).toISOString()
   }});
   assert.equal(correction.status,201,JSON.stringify(correction.data));
   const selfReview=await request('/api/attendance/corrections/'+correction.data.correction.id+'/review',{
@@ -179,12 +218,36 @@ test('administrador puede crear cuenta de trabajador vinculada a empleado',async
   assert.equal(originalAfter.occurredAt,originalBefore.occurredAt);
   assert.equal(originalAfter.adjustedAt,reviewed.data.adjustment.adjustedTime);
   assert.equal(originalAfter.adjustmentHash,reviewed.data.adjustment.adjustmentHash);
-  const listedCorrections=await request('/api/attendance/corrections',{token:supervisorLogin.data.token});
+  const listedCorrections=await request('/api/attendance/corrections?limit=1',{token:supervisorLogin.data.token});
+  assert.equal(listedCorrections.status,200);
+  assert.equal(listedCorrections.data.pagination.total,1);
   assert.equal(listedCorrections.data.corrections.find(c=>c.id===correction.data.correction.id).adjustmentId,reviewed.data.adjustment.id);
+  // La aprobación no puede invertir una entrada/salida ni producir una cronología inválida.
+  const existingEvents=(await request('/api/attendance/events',{token:adminToken})).data.events;
+  const qaEntry=existingEvents.find(e=>e.employeeNumber==='QA-001' && e.eventType==='clock_in');
+  assert.ok(qaEntry);
+  const invalidTimeline=await request('/api/attendance/corrections',{token:adminToken,method:'POST',body:{
+    eventId:qaEntry.id,reason:'Prueba de validación de secuencia temporal',proposedTime:new Date(Date.now()+60000).toISOString()
+  }});
+  assert.equal(invalidTimeline.status,201,JSON.stringify(invalidTimeline.data));
+  const invalidApproval=await request('/api/attendance/corrections/'+invalidTimeline.data.correction.id+'/review',{
+    token:supervisorLogin.data.token,method:'POST',body:{decision:'approved'}
+  });
+  assert.equal(invalidApproval.status,409,JSON.stringify(invalidApproval.data));
   const csv=await request('/api/reports/attendance.csv',{token:adminToken});
   assert.equal(csv.status,200);
   assert.match(csv.data,/fecha_ajustada/);
   assert.ok(csv.data.includes(reviewed.data.adjustment.adjustedTime));
+  const adjustedExit=await request('/api/attendance/events',{token:adminToken,method:'POST',body:{employeeId:otherId,eventType:'clock_out'}});
+  assert.equal(adjustedExit.status,201,JSON.stringify(adjustedExit.data));
+  const agreement=await request('/api/agreements',{token:adminToken,method:'POST',body:{employeeId:employee.id,version:'1.0',statement:'Acepto el uso del registro electrónico de asistencia conforme al aviso entregado.',method:'paper_reference'}});
+  assert.equal(agreement.status,201,JSON.stringify(agreement.data));
+  const agreementList=await request('/api/agreements?limit=1',{token:supervisorLogin.data.token});
+  assert.equal(agreementList.status,200);
+  assert.equal(agreementList.data.agreements[0].id,agreement.data.agreement.id);
+  const usersList=await request('/api/users?limit=2',{token:adminToken});
+  assert.equal(usersList.status,200);
+  assert.ok(usersList.data.pagination.total>=3);
 
   // Las horas con offset se guardan normalizadas a UTC.
   const thirdEmployee=await request('/api/employees',{token:adminToken,method:'POST',body:{
@@ -198,6 +261,13 @@ test('administrador puede crear cuenta de trabajador vinculada a empleado',async
   }});
   assert.equal(offsetEvent.status,201,JSON.stringify(offsetEvent.data));
   assert.ok(offsetEvent.data.event.occurred_at.endsWith('Z'));
+  const worker3=await request('/api/users',{token:adminToken,method:'POST',body:{name:'Trabajador tercero',email:'worker3@test.example',password:'Worker3-seguro-123456',role:'worker',employeeId:thirdEmployee.data.employee.id}});
+  assert.equal(worker3.status,201,JSON.stringify(worker3.data));
+  const worker3Login=await request('/api/auth/login',{method:'POST',body:{email:'worker3@test.example',password:'Worker3-seguro-123456'}});
+  assert.equal(worker3Login.status,200);
+  const employeeDeactivate=await request('/api/employees/'+thirdEmployee.data.employee.id+'/deactivate',{token:adminToken,method:'PATCH'});
+  assert.equal(employeeDeactivate.status,200,JSON.stringify(employeeDeactivate.data));
+  assert.equal((await request('/api/me',{token:worker3Login.data.token})).status,401);
 
   const passwordChange=await request('/api/auth/change-password',{token:adminToken,method:'POST',body:{
     currentPassword:'Password-seguro-12345',newPassword:'Password-nuevo-seguro-67890'
@@ -213,6 +283,25 @@ test('administrador puede crear cuenta de trabajador vinculada a empleado',async
   const deactivate=await request('/api/users/'+workerLogin.data.user.id+'/deactivate',{token:adminToken,method:'PATCH'});
   assert.equal(deactivate.status,200,JSON.stringify(deactivate.data));
   assert.equal((await request('/api/me',{token:workerToken})).status,401);
+  const reset=await request('/api/users/'+supervisorLogin.data.user.id+'/reset-password',{token:adminToken,method:'POST',body:{newPassword:'Supervisor-restablecido-98765'}});
+  assert.equal(reset.status,200,JSON.stringify(reset.data));
+  assert.equal((await request('/api/me',{token:supervisorLogin.data.token})).status,401);
+  const supervisorRelogin=await request('/api/auth/login',{method:'POST',body:{email:'supervisor@test.example',password:'Supervisor-restablecido-98765'}});
+  assert.equal(supervisorRelogin.status,200);
+});
+
+test('el respaldo cifrado se puede restaurar y la base restaurada conserva integridad',()=>{
+  const backupDir=join(tempDir,'backups');
+  const env={...process.env,DATABASE_PATH:join(tempDir,'test.sqlite'),BACKUP_DIR:backupDir,BACKUP_ENCRYPTION_KEY:'ab'.repeat(32)};
+  const created=spawnSync(process.execPath,['src/backup-db.js'],{cwd:backendDir,env,encoding:'utf8'});
+  assert.equal(created.status,0,(created.stdout||'')+'\\n'+(created.stderr||''));
+  const metadata=JSON.parse(created.stdout.trim());
+  assert.equal(metadata.encrypted,true);
+  const restored=join(tempDir,'restored.sqlite');
+  const restore=spawnSync(process.execPath,['src/restore-db.js',metadata.backup,restored],{cwd:backendDir,env,encoding:'utf8'});
+  assert.equal(restore.status,0,(restore.stdout||'')+'\\n'+(restore.stderr||''));
+  const check=spawnSync(process.execPath,['src/check-db.js'],{cwd:backendDir,env:{...env,DATABASE_PATH:restored},encoding:'utf8'});
+  assert.equal(check.status,0,(check.stdout||'')+'\\n'+(check.stderr||''));
 });
 
 test('el verificador de integridad valida eventos, ajustes aprobados y auditoría',()=>{

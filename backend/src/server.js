@@ -116,18 +116,55 @@ function writeEvent({companyId, employeeId, eventType, occurredAt, source, creat
 }
 
 const appError = (status, message) => Object.assign(new Error(message), { status });
+const MAX_RANGE_MS = 366 * 24 * 60 * 60 * 1000;
+const DEFAULT_PAGE_SIZE = 100;
+const MAX_PAGE_SIZE = 200;
+function parseDateRange(query) {
+  const from = query.from ? new Date(String(query.from)) : new Date(Date.now() - 30 * 86400000);
+  const to = query.to ? new Date(String(query.to)) : new Date();
+  if (Number.isNaN(from.valueOf()) || Number.isNaN(to.valueOf()) || from > to) throw appError(400, 'Rango de fechas inválido.');
+  if (to.getTime() - from.getTime() > MAX_RANGE_MS) throw appError(400, 'El rango máximo de consulta es de 366 días.');
+  return { from, to };
+}
+function parsePagination(query) {
+  const rawLimit = query.limit === undefined ? DEFAULT_PAGE_SIZE : Number(query.limit);
+  const rawOffset = query.offset === undefined ? 0 : Number(query.offset);
+  if (!Number.isInteger(rawLimit) || rawLimit < 1 || rawLimit > MAX_PAGE_SIZE) throw appError(400, `limit debe ser un entero entre 1 y ${MAX_PAGE_SIZE}.`);
+  if (!Number.isInteger(rawOffset) || rawOffset < 0 || rawOffset > 1000000) throw appError(400, 'offset debe ser un entero entre 0 y 1000000.');
+  return { limit: rawLimit, offset: rawOffset };
+}
+function assertValidEffectiveTimeline(companyId, employeeId, eventId, proposedTime) {
+  const rows = db.prepare(`SELECT e.id,e.event_type,e.occurred_at,e.rowid,
+    COALESCE((SELECT aa.adjusted_time FROM attendance_adjustments aa WHERE aa.original_event_id=e.id ORDER BY aa.rowid DESC LIMIT 1),e.occurred_at) AS effective_time
+    FROM attendance_events e WHERE e.company_id=? AND e.employee_id=? ORDER BY e.rowid`).all(companyId, employeeId);
+  const timeline = rows.map(row => ({...row, effective_time: row.id === eventId ? proposedTime : row.effective_time}))
+    .sort((a,b) => Date.parse(a.effective_time)-Date.parse(b.effective_time) || a.rowid-b.rowid);
+  let previous = null;
+  for (const [index, row] of timeline.entries()) {
+    if (index === 0 && row.event_type !== 'clock_in') throw appError(409, 'La cronología debe comenzar con una entrada; esta corrección rompería la secuencia.');
+    if (previous && Date.parse(row.effective_time) <= Date.parse(previous.effective_time)) {
+      throw appError(409, 'La corrección produciría dos eventos con la misma hora o fuera de orden.');
+    }
+    if (previous && previous.event_type === row.event_type) {
+      throw appError(409, 'La corrección rompería la secuencia entrada/salida. Revisa los registros relacionados antes de aprobarla.');
+    }
+    previous = row;
+  }
+}
 app.disable('x-powered-by');
 app.use(helmet());
 app.use(cors({
   origin(origin, cb) {
     const allowed = (process.env.CORS_ORIGIN || 'http://localhost:5173').split(',').map(s => s.trim());
     if (!origin || allowed.includes(origin)) return cb(null, true);
-    return cb(new Error('Origen no autorizado por CORS.'));
+    return cb(Object.assign(new Error('Origen no autorizado por CORS.'), { status: 403 }));
   },
   methods: ['GET','POST','PATCH','OPTIONS'],
   allowedHeaders: ['Content-Type','Authorization']
 }));
 app.use(express.json({ limit: '100kb', strict: true }));
+// Límites generales: reducen abuso de endpoints que no son de autenticación.
+app.use('/api', rateLimit({ windowMs: 15 * 60 * 1000, limit: 300, standardHeaders: 'draft-7', legacyHeaders: false }));
 // Configura únicamente los saltos de proxy conocidos; no confíes en proxies arbitrarios.
 const proxyHops = Number(process.env.TRUST_PROXY_HOPS || 0);
 if (Number.isInteger(proxyHops) && proxyHops > 0) app.set('trust proxy', proxyHops);
@@ -183,11 +220,26 @@ const eventSchema = z.object({
 const correctionSchema = z.object({ eventId:z.string().uuid(), reason:z.string().trim().min(8).max(1000), proposedTime:z.string().datetime({offset:true}) });
 const agreementSchema = z.object({ employeeId:z.string().uuid(), version:z.string().trim().min(1).max(40), statement:z.string().trim().min(10).max(3000), method:z.enum(['in_person','paper_reference','electronic_acknowledgement','other']) });
 
-app.get('/api/health', (req,res) => res.json({status:'ok',service:'ASISTIA API',version:'0.2.0',time:now()}));
+app.get('/api/health', (req,res) => {
+  try {
+    db.prepare('SELECT 1 AS ready').get();
+    res.json({status:'ok',database:'ok',service:'ASISTIA API',version:'0.3.0',time:now()});
+  } catch {
+    res.status(503).json({status:'error',database:'unavailable',service:'ASISTIA API',version:'0.3.0',time:now()});
+  }
+});
 app.get('/api/me', authenticate, (req,res) => res.json({user:req.user}));
 app.get('/api/company', authenticate, (req,res) => {
   const company = db.prepare('SELECT id,name,created_at AS createdAt FROM companies WHERE id=?').get(req.user.companyId);
   res.json({company});
+});
+app.get('/api/users', authenticate, roles('admin'), (req,res,next) => {
+  try {
+    const {limit,offset}=parsePagination(req.query);
+    const total=db.prepare('SELECT COUNT(*) AS total FROM users WHERE company_id=?').get(req.user.companyId).total;
+    const users=db.prepare('SELECT id,name,email,role,employee_id AS employeeId,active,created_at AS createdAt FROM users WHERE company_id=? ORDER BY created_at DESC LIMIT ? OFFSET ?').all(req.user.companyId,limit,offset);
+    res.json({users,pagination:{limit,offset,total,hasMore:offset+users.length<total}});
+  } catch(e) { next(e); }
 });
 app.post('/api/users', authenticate, roles('admin'), (req,res,next) => {
   try {
@@ -223,6 +275,20 @@ app.post('/api/auth/change-password', authenticate, (req,res,next) => {
     res.json({ok:true,message:'Contraseña actualizada. Inicia sesión de nuevo; las sesiones anteriores quedaron revocadas.'});
   } catch(e) { next(e); }
 });
+app.post('/api/users/:id/reset-password', authenticate, roles('admin'), (req,res,next) => {
+  try {
+    const input=z.object({newPassword:z.string().min(14).max(200)}).parse(req.body);
+    const target=db.prepare('SELECT id,active FROM users WHERE id=? AND company_id=?').get(req.params.id,req.user.companyId);
+    if (!target || !target.active) throw appError(404,'Usuario no encontrado o inactivo.');
+    if (target.id===req.user.id) throw appError(400,'Para cambiar tu propia contraseña usa /api/auth/change-password.');
+    db.transaction(()=>{
+      db.prepare('UPDATE users SET password_hash=?,token_version=token_version+1 WHERE id=? AND company_id=?')
+        .run(bcrypt.hashSync(input.newPassword,12),target.id,req.user.companyId);
+      writeAudit(req.user.companyId,req.user.id,'user.password_reset','user',target.id,{});
+    })();
+    res.json({ok:true,message:'Contraseña restablecida; las sesiones anteriores quedaron revocadas.'});
+  } catch(e) { next(e); }
+});
 app.patch('/api/users/:id/deactivate', authenticate, roles('admin'), (req,res,next) => {
   try {
     if (req.params.id === req.user.id) throw appError(400,'No puedes desactivar tu propia cuenta.');
@@ -239,15 +305,19 @@ app.patch('/api/users/:id/deactivate', authenticate, roles('admin'), (req,res,ne
     res.json({ok:true});
   } catch(e) { next(e); }
 });
-app.get('/api/employees', authenticate, (req,res) => {
+app.get('/api/employees', authenticate, (req,res,next) => {
+  try {
+  const {limit,offset}=parsePagination(req.query);
   // Los trabajadores solo pueden consultar su propio expediente.
   if (req.user.role === 'worker') {
     if (!req.user.employeeId) return res.json({employees:[]});
     const employee = db.prepare('SELECT id,employee_number AS employeeNumber,full_name AS fullName,rfc,branch,active,created_at AS createdAt FROM employees WHERE id=? AND company_id=?').get(req.user.employeeId,req.user.companyId);
     return res.json({employees:employee ? [employee] : []});
   }
-  const rows = db.prepare('SELECT id,employee_number AS employeeNumber,full_name AS fullName,email,rfc,branch,active,created_at AS createdAt FROM employees WHERE company_id=? ORDER BY full_name').all(req.user.companyId);
-  res.json({employees:rows});
+  const total=db.prepare('SELECT COUNT(*) AS total FROM employees WHERE company_id=?').get(req.user.companyId).total;
+  const rows = db.prepare('SELECT id,employee_number AS employeeNumber,full_name AS fullName,email,rfc,branch,active,created_at AS createdAt FROM employees WHERE company_id=? ORDER BY full_name LIMIT ? OFFSET ?').all(req.user.companyId,limit,offset);
+  res.json({employees:rows,pagination:{limit,offset,total,hasMore:offset+rows.length<total}});
+  } catch(e) { next(e); }
 });
 app.post('/api/employees', authenticate, roles('admin','supervisor'), (req,res,next) => {
   try {
@@ -261,10 +331,16 @@ app.post('/api/employees', authenticate, roles('admin','supervisor'), (req,res,n
 });
 app.patch('/api/employees/:id/deactivate', authenticate, roles('admin'), (req,res,next) => {
   try {
-    const result = db.prepare('UPDATE employees SET active=0 WHERE id=? AND company_id=?').run(req.params.id,req.user.companyId);
-    if (!result.changes) throw appError(404,'Empleado no encontrado.');
-    writeAudit(req.user.companyId,req.user.id,'employee.deactivated','employee',req.params.id,{});
-    res.json({ok:true});
+    const employee=db.prepare('SELECT id FROM employees WHERE id=? AND company_id=?').get(req.params.id,req.user.companyId);
+    if (!employee) throw appError(404,'Empleado no encontrado.');
+    db.transaction(() => {
+      db.prepare('UPDATE employees SET active=0 WHERE id=? AND company_id=?').run(req.params.id,req.user.companyId);
+      const linkedUsers=db.prepare("SELECT id,role FROM users WHERE employee_id=? AND company_id=? AND role='worker' AND active=1").all(req.params.id,req.user.companyId);
+      db.prepare("UPDATE users SET active=0,token_version=token_version+1 WHERE employee_id=? AND company_id=? AND role='worker' AND active=1").run(req.params.id,req.user.companyId);
+      for (const linked of linkedUsers) writeAudit(req.user.companyId,req.user.id,'user.deactivated_with_employee','user',linked.id,{role:linked.role,employeeId:req.params.id});
+      writeAudit(req.user.companyId,req.user.id,'employee.deactivated','employee',req.params.id,{linkedUsersDeactivated:linkedUsers.length});
+    })();
+    res.json({ok:true,linkedAccountsDeactivated:true});
   } catch(e) { next(e); }
 });
 app.post('/api/attendance/events', authenticate, (req,res,next) => {
@@ -278,7 +354,8 @@ app.post('/api/attendance/events', authenticate, (req,res,next) => {
     const timeDeltaMs = Date.parse(occurredAt) - Date.now();
     if (timeDeltaMs > 5 * 60 * 1000) throw appError(400,'La hora del evento no puede superar en más de 5 minutos la hora del servidor.');
     if (req.user.role !== 'worker' && input.occurredAt && Math.abs(timeDeltaMs) > 5 * 60 * 1000) throw appError(400,'Los registros manuales deben estar dentro de una ventana de 5 minutos. Para otros horarios, solicita una corrección trazable.');
-    const last = db.prepare('SELECT event_type,occurred_at FROM attendance_events WHERE company_id=? AND employee_id=? ORDER BY occurred_at DESC, rowid DESC LIMIT 1').get(req.user.companyId,input.employeeId);
+    const last = db.prepare(`SELECT e.event_type,COALESCE((SELECT aa.adjusted_time FROM attendance_adjustments aa WHERE aa.original_event_id=e.id ORDER BY aa.rowid DESC LIMIT 1),e.occurred_at) AS occurred_at
+      FROM attendance_events e WHERE e.company_id=? AND e.employee_id=? ORDER BY COALESCE((SELECT aa.adjusted_time FROM attendance_adjustments aa WHERE aa.original_event_id=e.id ORDER BY aa.rowid DESC LIMIT 1),e.occurred_at) DESC,e.rowid DESC LIMIT 1`).get(req.user.companyId,input.employeeId);
     if (!last && input.eventType === 'clock_out') throw appError(409,'No existe una entrada pendiente de salida.');
     if (last?.event_type === input.eventType) throw appError(409,input.eventType === 'clock_in' ? 'Ya existe una entrada sin salida.' : 'No existe una entrada pendiente de salida.');
     if (last && Date.parse(occurredAt) < Date.parse(last.occurred_at)) throw appError(409,'La fecha no puede ser anterior al último evento. Solicita una corrección trazable.');
@@ -293,22 +370,24 @@ app.post('/api/attendance/events', authenticate, (req,res,next) => {
 });
 app.get('/api/attendance/events', authenticate, (req,res,next) => {
   try {
-    const from = req.query.from ? new Date(String(req.query.from)) : new Date(Date.now()-30*86400000);
-    const to = req.query.to ? new Date(String(req.query.to)) : new Date();
-    if (Number.isNaN(from.valueOf()) || Number.isNaN(to.valueOf()) || from > to) throw appError(400,'Rango de fechas inválido.');
+    const {from,to}=parseDateRange(req.query);
+    const {limit,offset}=parsePagination(req.query);
     const rows = db.prepare(`SELECT e.id,e.employee_id AS employeeId,p.employee_number AS employeeNumber,p.full_name AS fullName,
       e.event_type AS eventType,e.occurred_at AS occurredAt,e.received_at AS receivedAt,e.source,e.created_by AS createdBy,e.previous_hash AS previousHash,e.event_hash AS eventHash,
-      a.adjusted_time AS adjustedAt,a.reason AS adjustmentReason,a.adjustment_hash AS adjustmentHash
+      a.adjusted_time AS adjustedAt,a.reason AS adjustmentReason,a.adjustment_hash AS adjustmentHash,
+      COALESCE(a.adjusted_time,e.occurred_at) AS effectiveOccurredAt
       FROM attendance_events e JOIN employees p ON p.id=e.employee_id
       LEFT JOIN attendance_adjustments a ON a.id=(SELECT aa.id FROM attendance_adjustments aa WHERE aa.original_event_id=e.id ORDER BY aa.rowid DESC LIMIT 1)
-      WHERE e.company_id=? AND e.occurred_at>=? AND e.occurred_at<=? AND (? IS NULL OR e.employee_id=?) ORDER BY e.occurred_at`)
-      .all(req.user.companyId,from.toISOString(),to.toISOString(),req.user.role === 'worker' ? (req.user.employeeId || '__no_employee__') : null,req.user.role === 'worker' ? (req.user.employeeId || '__no_employee__') : null);
-    res.json({events:rows,from:from.toISOString(),to:to.toISOString()});
+      WHERE e.company_id=? AND COALESCE(a.adjusted_time,e.occurred_at)>=? AND COALESCE(a.adjusted_time,e.occurred_at)<=? AND (? IS NULL OR e.employee_id=?) ORDER BY COALESCE(a.adjusted_time,e.occurred_at),e.rowid LIMIT ? OFFSET ?`)
+      .all(req.user.companyId,from.toISOString(),to.toISOString(),req.user.role === 'worker' ? (req.user.employeeId || '__no_employee__') : null,req.user.role === 'worker' ? (req.user.employeeId || '__no_employee__') : null,limit,offset);
+    const total=db.prepare(`SELECT COUNT(*) AS total FROM attendance_events e LEFT JOIN attendance_adjustments a ON a.id=(SELECT aa.id FROM attendance_adjustments aa WHERE aa.original_event_id=e.id ORDER BY aa.rowid DESC LIMIT 1) WHERE e.company_id=? AND COALESCE(a.adjusted_time,e.occurred_at)>=? AND COALESCE(a.adjusted_time,e.occurred_at)<=? AND (? IS NULL OR e.employee_id=?)`).get(req.user.companyId,from.toISOString(),to.toISOString(),req.user.role === 'worker' ? (req.user.employeeId || '__no_employee__') : null,req.user.role === 'worker' ? (req.user.employeeId || '__no_employee__') : null).total;
+    res.json({events:rows,from:from.toISOString(),to:to.toISOString(),pagination:{limit,offset,total,hasMore:offset+rows.length<total}});
   } catch(e) { next(e); }
 });
 app.post('/api/attendance/corrections', authenticate, (req,res,next) => {
   try {
     const input = correctionSchema.parse(req.body);
+    if (Date.parse(input.proposedTime) > Date.now() + 5 * 60 * 1000) throw appError(400,'La hora propuesta no puede estar en el futuro.');
     const event = db.prepare('SELECT id,employee_id FROM attendance_events WHERE id=? AND company_id=?').get(input.eventId,req.user.companyId);
     if (!event) throw appError(404,'Registro original no encontrado.');
     if (req.user.role === 'worker' && req.user.employeeId !== event.employee_id) throw appError(403,'No puedes solicitar cambios en otro expediente.');
@@ -319,12 +398,16 @@ app.post('/api/attendance/corrections', authenticate, (req,res,next) => {
     res.status(201).json({correction:{id,eventId:input.eventId,status:'pending',createdAt:created}});
   } catch(e) { next(e); }
 });
-app.get('/api/attendance/corrections', authenticate, roles('admin','supervisor'), (req,res) => {
+app.get('/api/attendance/corrections', authenticate, roles('admin','supervisor'), (req,res,next) => {
+  try {
+  const {limit,offset}=parsePagination(req.query);
+  const total=db.prepare('SELECT COUNT(*) AS total FROM correction_requests WHERE company_id=?').get(req.user.companyId).total;
   const corrections=db.prepare(`SELECT c.id,c.event_id AS eventId,c.requested_by AS requestedBy,c.reason,c.proposed_time AS proposedTime,c.status,c.reviewed_by AS reviewedBy,c.reviewed_at AS reviewedAt,c.created_at AS createdAt,
     a.id AS adjustmentId,a.adjusted_time AS adjustedTime,a.original_time AS originalTime,a.adjustment_hash AS adjustmentHash
   FROM correction_requests c LEFT JOIN attendance_adjustments a ON a.correction_request_id=c.id
-  WHERE c.company_id=? ORDER BY c.created_at DESC`).all(req.user.companyId);
-  res.json({corrections});
+  WHERE c.company_id=? ORDER BY c.created_at DESC LIMIT ? OFFSET ?`).all(req.user.companyId,limit,offset);
+  res.json({corrections,pagination:{limit,offset,total,hasMore:offset+corrections.length<total}});
+  } catch(e) { next(e); }
 });
 app.post('/api/attendance/corrections/:id/review', authenticate, roles('admin','supervisor'), (req,res,next) => {
   try {
@@ -340,10 +423,12 @@ app.post('/api/attendance/corrections/:id/review', authenticate, roles('admin','
       const reviewedAt=now();
       db.prepare('UPDATE correction_requests SET status=?,reviewed_by=?,reviewed_at=? WHERE id=?').run(input.decision,req.user.id,reviewedAt,row.id);
       if (input.decision==='approved') {
+        const adjustedTime=new Date(row.proposed_time).toISOString();
+        assertValidEffectiveTimeline(req.user.companyId, original.employee_id, original.id, adjustedTime);
         const id=randomUUID();
         const previousHash=db.prepare('SELECT adjustment_hash FROM attendance_adjustments WHERE company_id=? ORDER BY rowid DESC LIMIT 1').get(req.user.companyId)?.adjustment_hash || null;
         const createdAt=now();
-        const payload={id,companyId:req.user.companyId,correctionRequestId:row.id,originalEventId:original.id,employeeId:original.employee_id,eventType:original.event_type,originalTime:original.occurred_at,adjustedTime:new Date(row.proposed_time).toISOString(),reason:row.reason,approvedBy:req.user.id,createdAt,prev:previousHash};
+        const payload={id,companyId:req.user.companyId,correctionRequestId:row.id,originalEventId:original.id,employeeId:original.employee_id,eventType:original.event_type,originalTime:original.occurred_at,adjustedTime,reason:row.reason,approvedBy:req.user.id,createdAt,prev:previousHash};
         const adjustmentHash=createHash('sha256').update(JSON.stringify(payload)).digest('hex');
         db.prepare(`INSERT INTO attendance_adjustments(id,company_id,correction_request_id,original_event_id,employee_id,event_type,original_time,adjusted_time,reason,approved_by,created_at,previous_hash,adjustment_hash)
           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(id,req.user.companyId,row.id,original.id,original.employee_id,original.event_type,original.occurred_at,payload.adjustedTime,row.reason,req.user.id,createdAt,previousHash,adjustmentHash);
@@ -352,6 +437,14 @@ app.post('/api/attendance/corrections/:id/review', authenticate, roles('admin','
       writeAudit(req.user.companyId,req.user.id,'attendance.correction_reviewed','correction_request',row.id,{decision:input.decision,originalEventId:row.event_id,proposedTime:row.proposed_time,adjustmentId:adjustment?.id||null,adjustmentHash:adjustment?.adjustmentHash||null});
     })();
     res.json({id:row.id,status:input.decision,originalRecordPreserved:true,adjustment});
+  } catch(e) { next(e); }
+});
+app.get('/api/agreements', authenticate, roles('admin','supervisor'), (req,res,next) => {
+  try {
+    const {limit,offset}=parsePagination(req.query);
+    const total=db.prepare('SELECT COUNT(*) AS total FROM agreements WHERE company_id=?').get(req.user.companyId).total;
+    const agreements=db.prepare('SELECT id,employee_id AS employeeId,version,statement,accepted_at AS acceptedAt,method,recorded_by AS recordedBy,evidence_hash AS evidenceHash FROM agreements WHERE company_id=? ORDER BY accepted_at DESC LIMIT ? OFFSET ?').all(req.user.companyId,limit,offset);
+    res.json({agreements,pagination:{limit,offset,total,hasMore:offset+agreements.length<total}});
   } catch(e) { next(e); }
 });
 app.post('/api/agreements', authenticate, roles('admin','supervisor'), (req,res,next) => {
@@ -367,15 +460,16 @@ app.post('/api/agreements', authenticate, roles('admin','supervisor'), (req,res,
     res.status(201).json({agreement:{id,employeeId:input.employeeId,version:input.version,acceptedAt:accepted,method:input.method,evidenceHash,legalNote:'El hash y el registro no sustituyen una firma electrónica válida ni determinan por sí solos el cumplimiento legal.'}});
   } catch(e) { next(e); }
 });
-app.get('/api/reports/attendance.csv', authenticate, roles('admin','supervisor'), (req,res) => {
-  const from = req.query.from ? new Date(String(req.query.from)) : new Date(Date.now()-30*86400000);
-  const to = req.query.to ? new Date(String(req.query.to)) : new Date();
-  if (Number.isNaN(from.valueOf()) || Number.isNaN(to.valueOf()) || from > to) throw appError(400,'Rango de fechas inválido.');
+app.get('/api/reports/attendance.csv', authenticate, roles('admin','supervisor'), (req,res,next) => {
+  try {
+  const {from,to}=parseDateRange(req.query);
+  const totalRows=db.prepare(`SELECT COUNT(*) AS total FROM attendance_events e LEFT JOIN attendance_adjustments a ON a.id=(SELECT aa.id FROM attendance_adjustments aa WHERE aa.original_event_id=e.id ORDER BY aa.rowid DESC LIMIT 1) WHERE e.company_id=? AND COALESCE(a.adjusted_time,e.occurred_at)>=? AND COALESCE(a.adjusted_time,e.occurred_at)<=?`).get(req.user.companyId,from.toISOString(),to.toISOString()).total;
+  if (totalRows > 10000) throw appError(400,'La exportación supera 10,000 registros; acota el rango de fechas.');
   const rows=db.prepare(`SELECT p.employee_number,p.full_name,p.branch,e.event_type,e.occurred_at,e.received_at,e.source,e.event_hash,
     a.adjusted_time,a.reason AS adjustment_reason,a.adjustment_hash
     FROM attendance_events e JOIN employees p ON p.id=e.employee_id
     LEFT JOIN attendance_adjustments a ON a.id=(SELECT aa.id FROM attendance_adjustments aa WHERE aa.original_event_id=e.id ORDER BY aa.rowid DESC LIMIT 1)
-    WHERE e.company_id=? AND e.occurred_at>=? AND e.occurred_at<=? ORDER BY p.full_name,e.occurred_at`)
+    WHERE e.company_id=? AND COALESCE(a.adjusted_time,e.occurred_at)>=? AND COALESCE(a.adjusted_time,e.occurred_at)<=? ORDER BY p.full_name,COALESCE(a.adjusted_time,e.occurred_at)`)
     .all(req.user.companyId,from.toISOString(),to.toISOString());
   const cell=v => {
     let value=String(v ?? '');
@@ -387,10 +481,15 @@ app.get('/api/reports/attendance.csv', authenticate, roles('admin','supervisor')
   res.setHeader('Content-Type','text/csv; charset=utf-8');
   res.setHeader('Content-Disposition','attachment; filename="asistia-registros.csv"');
   res.send('\uFEFF'+csv);
+  } catch(e) { next(e); }
 });
-app.get('/api/audit', authenticate, roles('admin'), (req,res) => {
-  const rows=db.prepare('SELECT id,actor_id AS actorId,action,entity_type AS entityType,entity_id AS entityId,details_json AS details,created_at AS createdAt,previous_hash AS previousHash,entry_hash AS entryHash FROM audit_log WHERE company_id=? ORDER BY rowid DESC LIMIT 500').all(req.user.companyId);
-  res.json({entries:rows});
+app.get('/api/audit', authenticate, roles('admin'), (req,res,next) => {
+  try {
+  const {limit,offset}=parsePagination(req.query);
+  const total=db.prepare('SELECT COUNT(*) AS total FROM audit_log WHERE company_id=?').get(req.user.companyId).total;
+  const rows=db.prepare('SELECT id,actor_id AS actorId,action,entity_type AS entityType,entity_id AS entityId,details_json AS details,created_at AS createdAt,previous_hash AS previousHash,entry_hash AS entryHash FROM audit_log WHERE company_id=? ORDER BY rowid DESC LIMIT ? OFFSET ?').all(req.user.companyId,limit,offset);
+  res.json({entries:rows,pagination:{limit,offset,total,hasMore:offset+rows.length<total}});
+  } catch(e) { next(e); }
 });
 
 app.use((req,res,next) => next(appError(404,'Ruta no encontrada.')));
