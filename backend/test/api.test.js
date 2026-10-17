@@ -71,7 +71,7 @@ after(async () => {
 test('health check y autenticación',async()=>{
   const health=await request('/api/health');
   assert.equal(health.status,200);
-  assert.equal(health.data.version,'0.2.0');
+  assert.equal(health.data.version,'0.3.0');
   assert.equal((await request('/api/me',{token:adminToken})).status,200);
   assert.equal((await request('/api/me')).status,401);
   const badPage=await request('/api/employees?limit=999',{token:adminToken});
