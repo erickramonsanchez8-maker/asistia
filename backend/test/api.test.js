@@ -106,4 +106,45 @@ test('administrador puede crear cuenta de trabajador vinculada a empleado',async
   assert.equal(created.status,201,JSON.stringify(created.data));
   assert.equal(created.data.user.role,'worker');
   assert.equal(created.data.user.employeeId,employee.id);
+
+  // Un trabajador no debe consultar el directorio ni eventos de sus compañeros.
+  const secondEmployee=await request('/api/employees',{token:adminToken,method:'POST',body:{
+    employeeNumber:'QA-002',fullName:'Segundo empleado',branch:'Sucursal 2'
+  }});
+  assert.equal(secondEmployee.status,201,JSON.stringify(secondEmployee.data));
+  const otherId=secondEmployee.data.employee.id;
+  const otherEntry=await request('/api/attendance/events',{token:adminToken,method:'POST',body:{
+    employeeId:otherId,eventType:'clock_in'
+  }});
+  assert.equal(otherEntry.status,201,JSON.stringify(otherEntry.data));
+
+  const workerLogin=await request('/api/auth/login',{method:'POST',body:{
+    email:'worker@test.example',password:'Otra-clave-segura-12345'
+  }});
+  assert.equal(workerLogin.status,200,JSON.stringify(workerLogin.data));
+  const workerToken=workerLogin.data.token;
+  const workerEmployees=await request('/api/employees',{token:workerToken});
+  assert.equal(workerEmployees.status,200);
+  assert.equal(workerEmployees.data.employees.length,1);
+  assert.equal(workerEmployees.data.employees[0].id,employee.id);
+  assert.equal('email' in workerEmployees.data.employees[0],false);
+
+  const workerEvents=await request('/api/attendance/events',{token:workerToken});
+  assert.equal(workerEvents.status,200);
+  assert.ok(workerEvents.data.events.length>0);
+  assert.ok(workerEvents.data.events.every(event=>event.employeeId===employee.id));
+
+  const future=await request('/api/attendance/events',{token:adminToken,method:'POST',body:{
+    employeeId:otherId,eventType:'clock_out',occurredAt:'2030-01-01T12:00:00-06:00'
+  }});
+  assert.equal(future.status,400);
+
+  const correction=await request('/api/attendance/corrections',{token:adminToken,method:'POST',body:{
+    eventId:otherEntry.data.event.id,reason:'Verificar registro capturado por error',proposedTime:'2026-10-17T08:00:00-06:00'
+  }});
+  assert.equal(correction.status,201,JSON.stringify(correction.data));
+  const selfReview=await request('/api/attendance/corrections/'+correction.data.correction.id+'/review',{
+    token:adminToken,method:'POST',body:{decision:'approved'}
+  });
+  assert.equal(selfReview.status,403);
 });
