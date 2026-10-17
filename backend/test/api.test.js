@@ -78,10 +78,15 @@ test('health check y autenticación',async()=>{
 
 test('eventos de asistencia respetan la secuencia entrada/salida y conservan el original',async()=>{
   const employeeResponse=await request('/api/employees',{token:adminToken,method:'POST',body:{
-    employeeNumber:'QA-001',fullName:'Empleado de prueba',branch:'Principal'
+    employeeNumber:'QA-001',fullName:'Empleado de prueba',rfc:'sall061201abc',branch:'Principal'
   }});
   assert.equal(employeeResponse.status,201,JSON.stringify(employeeResponse.data));
+  assert.equal(employeeResponse.data.employee.rfc,'SALL061201ABC');
   const employeeId=employeeResponse.data.employee.id;
+  const employeeList=await request('/api/employees',{token:adminToken});
+  assert.equal(employeeList.data.employees.find(e=>e.id===employeeId).rfc,'SALL061201ABC');
+  const invalidRfc=await request('/api/employees',{token:adminToken,method:'POST',body:{employeeNumber:'QA-RFC-BAD',fullName:'RFC inválido',rfc:'ABC123',branch:'Principal'}});
+  assert.equal(invalidRfc.status,400);
   const invalidExit=await request('/api/attendance/events',{token:adminToken,method:'POST',body:{employeeId,eventType:'clock_out'}});
   assert.equal(invalidExit.status,409);
   const entry=await request('/api/attendance/events',{token:adminToken,method:'POST',body:{employeeId,eventType:'clock_in'}});
