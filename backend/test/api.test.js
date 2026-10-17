@@ -177,8 +177,14 @@ test('administrador puede crear cuenta de trabajador vinculada a empleado',async
   assert.ok(reviewed.data.adjustment.adjustmentHash);
   const originalAfter=(await request('/api/attendance/events',{token:adminToken})).data.events.find(e=>e.id===otherEntry.data.event.id);
   assert.equal(originalAfter.occurredAt,originalBefore.occurredAt);
+  assert.equal(originalAfter.adjustedAt,reviewed.data.adjustment.adjustedTime);
+  assert.equal(originalAfter.adjustmentHash,reviewed.data.adjustment.adjustmentHash);
   const listedCorrections=await request('/api/attendance/corrections',{token:supervisorLogin.data.token});
   assert.equal(listedCorrections.data.corrections.find(c=>c.id===correction.data.correction.id).adjustmentId,reviewed.data.adjustment.id);
+  const csv=await request('/api/reports/attendance.csv',{token:adminToken});
+  assert.equal(csv.status,200);
+  assert.match(csv.data,/fecha_ajustada/);
+  assert.ok(csv.data.includes(reviewed.data.adjustment.adjustedTime));
 
   // Las horas con offset se guardan normalizadas a UTC.
   const thirdEmployee=await request('/api/employees',{token:adminToken,method:'POST',body:{
