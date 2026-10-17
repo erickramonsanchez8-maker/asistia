@@ -46,7 +46,7 @@ npm run backup:create
 Para restaurar primero a una ruta nueva (no sobrescribe bases existentes):
 
 ```powershell
-npm run backup:restore -- .\\backups\\archivo.asistia.enc .\\data\\restaurada.sqlite
+npm run backup:restore -- .\backups\archivo.asistia.enc .\data\restaurada.sqlite
 ```
 
 Prueba la restauración periódicamente. Programa `npm run backup:create` en el Programador de tareas de Windows o en el scheduler del proveedor y copia el archivo cifrado a almacenamiento externo con acceso restringido. La clave de cifrado debe respaldarse por separado; perderla impide descifrar los respaldos.
