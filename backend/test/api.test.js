@@ -1,6 +1,6 @@
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -213,4 +213,14 @@ test('administrador puede crear cuenta de trabajador vinculada a empleado',async
   const deactivate=await request('/api/users/'+workerLogin.data.user.id+'/deactivate',{token:adminToken,method:'PATCH'});
   assert.equal(deactivate.status,200,JSON.stringify(deactivate.data));
   assert.equal((await request('/api/me',{token:workerToken})).status,401);
+});
+
+test('el verificador de integridad valida eventos, ajustes aprobados y auditoría',()=>{
+  const result=spawnSync(process.execPath,['src/verify-integrity.js'],{
+    cwd:backendDir,
+    env:{...process.env,DATABASE_PATH:join(tempDir,'test.sqlite'),JWT_SECRET:'test-secret-which-is-at-least-32-characters-long'},
+    encoding:'utf8'
+  });
+  assert.equal(result.status,0,(result.stdout||'')+'\n'+(result.stderr||''));
+  assert.match(result.stdout,/Integridad comprobada/);
 });
