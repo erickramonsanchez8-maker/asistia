@@ -74,6 +74,10 @@ test('health check y autenticación',async()=>{
   assert.equal(health.data.version,'0.2.0');
   assert.equal((await request('/api/me',{token:adminToken})).status,200);
   assert.equal((await request('/api/me')).status,401);
+  const badPage=await request('/api/employees?limit=999',{token:adminToken});
+  assert.equal(badPage.status,400);
+  const tooWide=await request('/api/attendance/events?from=2024-01-01T00:00:00Z&to=2026-10-17T00:00:00Z',{token:adminToken});
+  assert.equal(tooWide.status,400);
 });
 
 test('eventos de asistencia respetan la secuencia entrada/salida y conservan el original',async()=>{
@@ -85,6 +89,10 @@ test('eventos de asistencia respetan la secuencia entrada/salida y conservan el 
   const employeeId=employeeResponse.data.employee.id;
   const employeeList=await request('/api/employees',{token:adminToken});
   assert.equal(employeeList.data.employees.find(e=>e.id===employeeId).rfc,'SALL061201ABC');
+  const firstPage=await request('/api/employees?limit=1&offset=0',{token:adminToken});
+  assert.equal(firstPage.status,200);
+  assert.equal(firstPage.data.employees.length,1);
+  assert.equal(firstPage.data.pagination.total,1);
   const invalidRfc=await request('/api/employees',{token:adminToken,method:'POST',body:{employeeNumber:'QA-RFC-BAD',fullName:'RFC inválido',rfc:'ABC123',branch:'Principal'}});
   assert.equal(invalidRfc.status,400);
   const invalidExit=await request('/api/attendance/events',{token:adminToken,method:'POST',body:{employeeId,eventType:'clock_out'}});
@@ -149,7 +157,7 @@ test('administrador puede crear cuenta de trabajador vinculada a empleado',async
   assert.equal(future.status,400);
 
   const correction=await request('/api/attendance/corrections',{token:adminToken,method:'POST',body:{
-    eventId:otherEntry.data.event.id,reason:'Verificar registro capturado por error',proposedTime:'2026-10-17T08:00:00-06:00'
+    eventId:otherEntry.data.event.id,reason:'Verificar registro capturado por error',proposedTime:new Date(Date.now()-120000).toISOString()
   }});
   assert.equal(correction.status,201,JSON.stringify(correction.data));
   const selfReview=await request('/api/attendance/corrections/'+correction.data.correction.id+'/review',{
@@ -179,12 +187,22 @@ test('administrador puede crear cuenta de trabajador vinculada a empleado',async
   assert.equal(originalAfter.occurredAt,originalBefore.occurredAt);
   assert.equal(originalAfter.adjustedAt,reviewed.data.adjustment.adjustedTime);
   assert.equal(originalAfter.adjustmentHash,reviewed.data.adjustment.adjustmentHash);
-  const listedCorrections=await request('/api/attendance/corrections',{token:supervisorLogin.data.token});
+  const listedCorrections=await request('/api/attendance/corrections?limit=1',{token:supervisorLogin.data.token});
+  assert.equal(listedCorrections.status,200);
+  assert.equal(listedCorrections.data.pagination.total,1);
   assert.equal(listedCorrections.data.corrections.find(c=>c.id===correction.data.correction.id).adjustmentId,reviewed.data.adjustment.id);
   const csv=await request('/api/reports/attendance.csv',{token:adminToken});
   assert.equal(csv.status,200);
   assert.match(csv.data,/fecha_ajustada/);
   assert.ok(csv.data.includes(reviewed.data.adjustment.adjustedTime));
+  const agreement=await request('/api/agreements',{token:adminToken,method:'POST',body:{employeeId:employee.id,version:'1.0',statement:'Acepto el uso del registro electrónico de asistencia conforme al aviso entregado.',method:'paper_reference'}});
+  assert.equal(agreement.status,201,JSON.stringify(agreement.data));
+  const agreementList=await request('/api/agreements?limit=1',{token:supervisorLogin.data.token});
+  assert.equal(agreementList.status,200);
+  assert.equal(agreementList.data.agreements[0].id,agreement.data.agreement.id);
+  const usersList=await request('/api/users?limit=2',{token:adminToken});
+  assert.equal(usersList.status,200);
+  assert.ok(usersList.data.pagination.total>=3);
 
   // Las horas con offset se guardan normalizadas a UTC.
   const thirdEmployee=await request('/api/employees',{token:adminToken,method:'POST',body:{
@@ -213,6 +231,25 @@ test('administrador puede crear cuenta de trabajador vinculada a empleado',async
   const deactivate=await request('/api/users/'+workerLogin.data.user.id+'/deactivate',{token:adminToken,method:'PATCH'});
   assert.equal(deactivate.status,200,JSON.stringify(deactivate.data));
   assert.equal((await request('/api/me',{token:workerToken})).status,401);
+  const reset=await request('/api/users/'+supervisorLogin.data.user.id+'/reset-password',{token:adminToken,method:'POST',body:{newPassword:'Supervisor-restablecido-98765'}});
+  assert.equal(reset.status,200,JSON.stringify(reset.data));
+  assert.equal((await request('/api/me',{token:supervisorLogin.data.token})).status,401);
+  const supervisorRelogin=await request('/api/auth/login',{method:'POST',body:{email:'supervisor@test.example',password:'Supervisor-restablecido-98765'}});
+  assert.equal(supervisorRelogin.status,200);
+});
+
+test('el respaldo cifrado se puede restaurar y la base restaurada conserva integridad',()=>{
+  const backupDir=join(tempDir,'backups');
+  const env={...process.env,DATABASE_PATH:join(tempDir,'test.sqlite'),BACKUP_DIR:backupDir,BACKUP_ENCRYPTION_KEY:'ab'.repeat(32)};
+  const created=spawnSync(process.execPath,['src/backup-db.js'],{cwd:backendDir,env,encoding:'utf8'});
+  assert.equal(created.status,0,(created.stdout||'')+'\\n'+(created.stderr||''));
+  const metadata=JSON.parse(created.stdout.trim());
+  assert.equal(metadata.encrypted,true);
+  const restored=join(tempDir,'restored.sqlite');
+  const restore=spawnSync(process.execPath,['src/restore-db.js',metadata.backup,restored],{cwd:backendDir,env,encoding:'utf8'});
+  assert.equal(restore.status,0,(restore.stdout||'')+'\\n'+(restore.stderr||''));
+  const check=spawnSync(process.execPath,['src/check-db.js'],{cwd:backendDir,env:{...env,DATABASE_PATH:restored},encoding:'utf8'});
+  assert.equal(check.status,0,(check.stdout||'')+'\\n'+(check.stderr||''));
 });
 
 test('el verificador de integridad valida eventos, ajustes aprobados y auditoría',()=>{
