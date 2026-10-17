@@ -191,6 +191,39 @@ app.post('/api/users', authenticate, roles('admin'), (req,res,next) => {
     res.status(201).json({user:{id,name:input.name,email:input.email,role:input.role,employeeId:input.employeeId||null,createdAt:created}});
   } catch(e) { next(e); }
 });
+app.post('/api/auth/change-password', authenticate, (req,res,next) => {
+  try {
+    const input=z.object({
+      currentPassword:z.string().min(1).max(200),
+      newPassword:z.string().min(14).max(200)
+    }).parse(req.body);
+    const account=db.prepare('SELECT password_hash FROM users WHERE id=? AND company_id=? AND active=1').get(req.user.id,req.user.companyId);
+    if (!account || !bcrypt.compareSync(input.currentPassword,account.password_hash)) throw appError(401,'La contraseña actual es incorrecta.');
+    if (input.currentPassword === input.newPassword) throw appError(400,'La nueva contraseña debe ser diferente.');
+    db.transaction(() => {
+      db.prepare('UPDATE users SET password_hash=?,token_version=token_version+1 WHERE id=? AND company_id=?')
+        .run(bcrypt.hashSync(input.newPassword,12),req.user.id,req.user.companyId);
+      writeAudit(req.user.companyId,req.user.id,'auth.password_changed','user',req.user.id,{});
+    })();
+    res.json({ok:true,message:'Contraseña actualizada. Inicia sesión de nuevo; las sesiones anteriores quedaron revocadas.'});
+  } catch(e) { next(e); }
+});
+app.patch('/api/users/:id/deactivate', authenticate, roles('admin'), (req,res,next) => {
+  try {
+    if (req.params.id === req.user.id) throw appError(400,'No puedes desactivar tu propia cuenta.');
+    const target=db.prepare('SELECT id,role,active FROM users WHERE id=? AND company_id=?').get(req.params.id,req.user.companyId);
+    if (!target || !target.active) throw appError(404,'Usuario no encontrado o ya inactivo.');
+    if (target.role === 'admin') {
+      const activeAdmins=db.prepare("SELECT COUNT(*) AS n FROM users WHERE company_id=? AND role='admin' AND active=1").get(req.user.companyId).n;
+      if (activeAdmins <= 1) throw appError(409,'No puedes desactivar al último administrador activo de la empresa.');
+    }
+    db.transaction(() => {
+      db.prepare('UPDATE users SET active=0,token_version=token_version+1 WHERE id=? AND company_id=?').run(target.id,req.user.companyId);
+      writeAudit(req.user.companyId,req.user.id,'user.deactivated','user',target.id,{role:target.role});
+    })();
+    res.json({ok:true});
+  } catch(e) { next(e); }
+});
 app.get('/api/employees', authenticate, (req,res) => {
   // Los trabajadores solo pueden consultar su propio expediente.
   if (req.user.role === 'worker') {
