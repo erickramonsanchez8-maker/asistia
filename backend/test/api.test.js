@@ -106,6 +106,10 @@ test('administrador puede crear cuenta de trabajador vinculada a empleado',async
   assert.equal(created.status,201,JSON.stringify(created.data));
   assert.equal(created.data.user.role,'worker');
   assert.equal(created.data.user.employeeId,employee.id);
+  const duplicateEmail=await request('/api/users',{token:adminToken,method:'POST',body:{
+    name:'Cuenta duplicada',email:'WORKER@test.example',password:'Clave-diferente-segura-12345',role:'admin'
+  }});
+  assert.equal(duplicateEmail.status,409);
 
   // Un trabajador no debe consultar el directorio ni eventos de sus compañeros.
   const secondEmployee=await request('/api/employees',{token:adminToken,method:'POST',body:{
