@@ -56,11 +56,14 @@ La forma definitiva de las tablas debe revisarse contra la base existente y sus 
 
 - Backend local: `GET /api/license/status` y `POST /api/license/activate` para guardar/verificar un documento firmado.
 - Servicio remoto separado en `licensing-service/`: `GET /v1/health`, `POST /v1/admin/licenses`, `POST /v1/admin/licenses/:id/activation-code`, `POST /v1/activate`, `POST /v1/licenses/refresh`, `POST /v1/licenses/deactivate`, `POST /v1/admin/licenses/:id/renew` y `POST /v1/admin/licenses/:id/revoke`.
-- La activación, emisión, renovación y revocación están cubiertas por pruebas de integración en desarrollo. El servicio remoto todavía no está conectado al backend local ni a un flujo real de cobro.
+- La activación, emisión, renovación y revocación están cubiertas por pruebas de integración en desarrollo. La API local ahora incluye rutas para activar por código remoto, renovar, y liberar la activación. Las rutas usan una clave pública para validar documentos y cifran el secreto de activación en la base local. El flujo remoto está conectado en código, pero aún requiere pruebas de integración específicas y validación en una instalación real; no hay flujo de cobro.
 
 ### Contrato objetivo / integración pendiente
 
-- El cliente de escritorio debe llamar al servicio remoto y después instalar el documento firmado en el backend local.
+- La interfaz de escritorio debe llamar a las rutas locales autenticadas; la API local contacta el servicio remoto y guarda el documento firmado.
+- `POST /api/license/activate` acepta `{ "activationCode": "..." }` para activación remota o `{ "signedDocument": "..." }` para instalar un documento firmado manualmente.
+- `POST /api/license/refresh` renueva la licencia usando credenciales cifradas almacenadas localmente.
+- `POST /api/license/deactivate` libera la activación remota y marca la instalación como desactivada; el historial permanece en la base.
 
 - `GET /api/license/status`: estado local verificado, plan, límites y fechas; no devuelve secretos ni el documento de pago.
 - `POST /api/license/activate`: validar código de activación con el servicio remoto y guardar el documento firmado.
