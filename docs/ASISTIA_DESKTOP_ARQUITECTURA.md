@@ -56,7 +56,7 @@ La forma definitiva de las tablas debe revisarse contra la base existente y sus 
 
 - Backend local: `GET /api/license/status` y `POST /api/license/activate` para guardar/verificar un documento firmado.
 - Servicio remoto separado en `licensing-service/`: `GET /v1/health`, `POST /v1/admin/licenses`, `POST /v1/admin/licenses/:id/activation-code`, `POST /v1/activate`, `POST /v1/licenses/refresh`, `POST /v1/licenses/deactivate`, `POST /v1/admin/licenses/:id/renew` y `POST /v1/admin/licenses/:id/revoke`.
-- La activación, emisión, renovación y revocación están cubiertas por pruebas de integración en desarrollo. La API local ahora incluye rutas para activar por código remoto, renovar, y liberar la activación. Las rutas usan una clave pública para validar documentos y cifran el secreto de activación en la base local. El flujo remoto está conectado en código, pero aún requiere pruebas de integración específicas y validación en una instalación real; no hay flujo de cobro.
+- La activación, emisión, renovación y revocación están cubiertas por pruebas de integración en desarrollo. La API local incluye rutas para activar por código remoto, renovar y liberar la activación. Las rutas validan documentos con la clave pública y cifran el secreto de activación en la base local con AES-256-GCM. Se añadió una prueba de integración que recorre activación, renovación y desactivación contra un servicio remoto simulado; CI pasó. Aún falta probar con el servicio real desplegado y en una instalación de Windows; no hay flujo de cobro.
 
 ### Contrato objetivo / integración pendiente
 
@@ -88,9 +88,9 @@ Los errores de conectividad no deben convertir una licencia desconocida en váli
 4. Aplicar límite de empleados dentro del endpoint de creación, con pruebas de concurrencia y de aislamiento por empresa.
 
 ### Fase C — Servicio remoto
-1. Endurecer y desplegar el servicio remoto separado con almacenamiento de licencias y activaciones; integrar proveedor de pagos después de elegirlo.
+1. Revisar y desplegar el servicio remoto separado con almacenamiento de licencias y activaciones; integrar proveedor de pagos después de elegirlo.
 2. Mantener la clave privada solo en el servidor remoto/gestor de secretos.
-3. Probar activación duplicada, límites de dispositivos, revocación, renovación, caída del servicio, respuesta repetida y recuperación tras volver internet.
+3. Completar pruebas contra el servicio remoto real para activación duplicada, límites de dispositivos, revocación, renovación, caída del servicio y recuperación tras volver internet.
 4. No dar por pagada una suscripción hasta recibir confirmación verificada del proveedor de pagos.
 
 ### Fase D — Aplicación de escritorio
