@@ -9,7 +9,7 @@ Sistema de control de asistencia. La versión actual conserva el HTML existente 
 ## Estado de la versión 0.3
 La API se encuentra en etapa inicial. La interfaz HTML todavía no está conectada a ella; son dos vías separadas hasta completar integración y pruebas. El módulo Cumplimiento LFT permite generar constancias individuales y descargar una copia HTML, pero sus registros permanecen en localStorage. No migres datos reales ni retires el flujo anterior sin probar respaldo, restauración y reconciliación.
 
-Consulta [arquitectura y límites de ASISTIA 0.3](docs/ASISTIA_0.2_ARQUITECTURA.md), [modelo de datos](database/README.md) y la [plantilla de acuerdo de uso del registro electrónico de jornada](docs/ASISTIA_Acuerdo_Uso_Registro_Electronico.md).
+Consulta [arquitectura y límites de ASISTIA 0.3](docs/ASISTIA_0.2_ARQUITECTURA.md), [arquitectura objetivo de ASISTIA Desktop y licencias](docs/ASISTIA_DESKTOP_ARQUITECTURA.md), [modelo de datos](database/README.md) y la [plantilla de acuerdo de uso del registro electrónico de jornada](docs/ASISTIA_Acuerdo_Uso_Registro_Electronico.md). La arquitectura Desktop es un diseño de implementación; no implica que la activación o validación de licencias ya esté habilitada.
 
 ## Ejecutar la API
 Requisitos: Node.js 20+.
