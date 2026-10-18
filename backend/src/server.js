@@ -7,6 +7,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 import { randomUUID, createHash } from 'node:crypto';
+import { verifyLicenseDocument } from './license-verifier.js';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import Database from 'better-sqlite3';
@@ -30,6 +31,11 @@ db.pragma('busy_timeout = 5000');
 db.exec(`
 CREATE TABLE IF NOT EXISTS companies (
   id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS license_state (
+  id TEXT PRIMARY KEY, company_id TEXT NOT NULL UNIQUE REFERENCES companies(id),
+  license_id TEXT NOT NULL, signed_document TEXT NOT NULL,
+  last_validated_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY, company_id TEXT NOT NULL REFERENCES companies(id),
@@ -228,6 +234,78 @@ app.get('/api/health', (req,res) => {
     res.status(503).json({status:'error',database:'unavailable',service:'ASISTIA API',version:'0.3.0',time:now()});
   }
 });
+
+function licensePublicKey() {
+  return (process.env.ASISTIA_LICENSE_PUBLIC_KEY || '').replace(/\\n/g, '\n').trim();
+}
+function readCompanyLicense(companyId) {
+  const saved = db.prepare('SELECT license_id, signed_document, last_validated_at FROM license_state WHERE company_id=?').get(companyId);
+  if (!saved) return { status:'unlicensed', license:null, lastValidatedAt:null };
+  const publicKey = licensePublicKey();
+  if (!publicKey) return { status:'configuration_error', license:null, lastValidatedAt:saved.last_validated_at };
+  try {
+    const license = verifyLicenseDocument(saved.signed_document, publicKey, new Date());
+    if (license.companyId !== companyId || license.licenseId !== saved.license_id) {
+      return { status:'invalid', license:null, lastValidatedAt:saved.last_validated_at };
+    }
+    return { status:license.status, license, lastValidatedAt:saved.last_validated_at };
+  } catch {
+    return { status:'invalid', license:null, lastValidatedAt:saved.last_validated_at };
+  }
+}
+function assertLicenseAllowsEmployee(companyId) {
+  if (process.env.ASISTIA_LICENSE_ENFORCEMENT !== 'true') return;
+  const state = readCompanyLicense(companyId);
+  if (!state.license || !['active','offline_grace'].includes(state.status)) {
+    throw appError(402, 'Se requiere una licencia ASISTIA válida para registrar empleados. Conservas el acceso al historial y a sus exportaciones.');
+  }
+  const activeEmployees = db.prepare('SELECT COUNT(*) AS total FROM employees WHERE company_id=? AND active=1').get(companyId).total;
+  if (activeEmployees >= state.license.maxEmployees) {
+    throw appError(409, `El plan actual permite hasta ${state.license.maxEmployees} empleados activos. Amplía tu plan para registrar más.`);
+  }
+}
+app.get('/api/license/status', authenticate, roles('admin'), (req,res) => {
+  const state = readCompanyLicense(req.user.companyId);
+  res.json({
+    status:state.status,
+    lastValidatedAt:state.lastValidatedAt,
+    license:state.license ? {
+      licenseId:state.license.licenseId,
+      companyId:state.license.companyId,
+      planCode:state.license.planCode,
+      expiresAt:state.license.expiresAt,
+      offlineGraceUntil:state.license.offlineGraceUntil,
+      maxEmployees:state.license.maxEmployees,
+      maxDevices:state.license.maxDevices,
+      licenseVersion:state.license.licenseVersion
+    } : null
+  });
+});
+app.post('/api/license/activate', authenticate, roles('admin'), (req,res,next) => {
+  try {
+    const input=z.object({signedDocument:z.string().min(20).max(16384)}).parse(req.body);
+    const publicKey=licensePublicKey();
+    if (!publicKey) throw appError(503,'La verificación de licencias no está configurada en este equipo.');
+    let license;
+    try { license=verifyLicenseDocument(input.signedDocument,publicKey,new Date()); }
+    catch(e) { throw appError(422,e.message || 'Documento de licencia inválido.'); }
+    if (license.companyId !== req.user.companyId) throw appError(403,'La licencia no corresponde a esta empresa.');
+    if (!['active','offline_grace'].includes(license.status)) throw appError(402,'La licencia está vencida o fuera del periodo de gracia.');
+    const existing=db.prepare('SELECT license_id FROM license_state WHERE company_id=?').get(req.user.companyId);
+    const timestamp=now();
+    db.prepare(`INSERT INTO license_state(id,company_id,license_id,signed_document,last_validated_at,updated_at)
+      VALUES(?,?,?,?,?,?)
+      ON CONFLICT(company_id) DO UPDATE SET license_id=excluded.license_id,
+      signed_document=excluded.signed_document,last_validated_at=excluded.last_validated_at,updated_at=excluded.updated_at`)
+      .run(existing ? db.prepare('SELECT id FROM license_state WHERE company_id=?').get(req.user.companyId).id : randomUUID(),
+        req.user.companyId,license.licenseId,input.signedDocument,timestamp,timestamp);
+    writeAudit(req.user.companyId,req.user.id,'license.activated','license',license.licenseId,{planCode:license.planCode,expiresAt:license.expiresAt,maxEmployees:license.maxEmployees,maxDevices:license.maxDevices});
+    res.status(200).json({ok:true,status:license.status,license:{
+      licenseId:license.licenseId,planCode:license.planCode,expiresAt:license.expiresAt,
+      offlineGraceUntil:license.offlineGraceUntil,maxEmployees:license.maxEmployees,maxDevices:license.maxDevices
+    }});
+  } catch(e) { next(e); }
+});
 app.get('/api/me', authenticate, (req,res) => res.json({user:req.user}));
 app.get('/api/company', authenticate, (req,res) => {
   const company = db.prepare('SELECT id,name,created_at AS createdAt FROM companies WHERE id=?').get(req.user.companyId);
@@ -322,6 +400,7 @@ app.get('/api/employees', authenticate, (req,res,next) => {
 app.post('/api/employees', authenticate, roles('admin','supervisor'), (req,res,next) => {
   try {
     const input = employeeSchema.parse(req.body);
+    assertLicenseAllowsEmployee(req.user.companyId);
     const id = randomUUID(), created = now();
     db.prepare('INSERT INTO employees(id,company_id,employee_number,full_name,email,rfc,branch,created_at) VALUES(?,?,?,?,?,?,?,?)')
       .run(id,req.user.companyId,input.employeeNumber,input.fullName,input.email || null,input.rfc || null,input.branch,created);
