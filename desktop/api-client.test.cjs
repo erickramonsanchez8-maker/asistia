@@ -59,14 +59,17 @@ test('rechaza errores de API y limpia la sesión cuando el token expira', async 
   assert.equal(client.isAuthenticated, false);
 });
 
-test('valida tipo de evento antes de enviar una marca de asistencia', async () => {
-  let calls = 0;
+test('valida evento y origen compatibles con el esquema de la API', async () => {
+  const calls = [];
   const client = createClient({
     baseUrl: 'http://127.0.0.1:3000',
-    fetch: async () => { calls++; return fakeResponse(200, { ok: true }); }
+    fetch: async (url, options) => { calls.push({url, options}); return fakeResponse(201, { event: { id: 'event-1' } }); }
   });
   assert.throws(() => client.punch('employee-1', 'break'), /Tipo de asistencia no válido/);
-  assert.equal(calls, 0);
+  assert.throws(() => client.punch('employee-1', 'clock_in', 'desktop'), /Origen de asistencia no válido/);
+  assert.equal(calls.length, 0);
   await client.punch('employee-1', 'clock_in');
-  assert.equal(calls, 1);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, 'http://127.0.0.1:3000/api/attendance/events');
+  assert.equal(calls[0].options.body, JSON.stringify({employeeId:'employee-1',eventType:'clock_in',source:'admin'}));
 });
