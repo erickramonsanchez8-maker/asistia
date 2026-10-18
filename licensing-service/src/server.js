@@ -181,6 +181,20 @@ app.post('/v1/licenses/deactivate', (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+app.post('/v1/admin/licenses/:id/activation-code', adminOnly, (req, res, next) => {
+  try {
+    const license = db.prepare("SELECT * FROM licenses WHERE id=? AND status='active'").get(req.params.id);
+    if (!license) throw appError(404, 'Licencia activa no encontrada.');
+    const activeCount = db.prepare("SELECT COUNT(*) AS total FROM activations WHERE license_id=? AND status='active'").get(license.id).total;
+    if (activeCount >= license.max_devices) throw appError(409, 'No hay cupos de dispositivo disponibles; desactiva uno antes de emitir otro código.');
+    const activationCode = randomSecret(32);
+    const timestamp = iso(now());
+    db.prepare('UPDATE licenses SET activation_code_hash=?,updated_at=? WHERE id=?').run(hash(activationCode), timestamp, license.id);
+    audit(license.id, 'activation_code.issued', {});
+    res.status(201).json({ licenseId: license.id, activationCode });
+  } catch (error) { next(error); }
+});
+
 app.post('/v1/admin/licenses/:id/renew', adminOnly, (req, res, next) => {
   try {
     const input = z.object({ durationDays: z.number().int().min(1).max(3660) }).parse(req.body);
