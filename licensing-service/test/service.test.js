@@ -31,7 +31,7 @@ async function request(path, { method = 'GET', body, admin = false } = {}) {
 before(async () => {
   const keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
   privateKey = keys.privateKey.export({ type: 'pkcs8', format: 'pem' });
-  publicKey = keys.publicKey.export({ type: 'spki', format: 'pem' });
+  publicKey = keys.publicKey;
   tempDir = await mkdtemp(join(tmpdir(), 'asistia-licensing-test-'));
   const port = await freePort();
   baseUrl = 'http://127.0.0.1:' + port;
@@ -78,7 +78,10 @@ test('emite código de un solo uso, firma documento compatible y aplica el lími
   assert.equal(activation.status, 200, JSON.stringify(activation.data));
   const [payloadEncoded, signatureEncoded] = activation.data.signedDocument.split('.');
   assert.ok(payloadEncoded && signatureEncoded);
-  const payload = JSON.parse(Buffer.from(payloadEncoded, 'base64url').toString('utf8'));
+  const payloadBytes = Buffer.from(payloadEncoded, 'base64url');
+  const signature = Buffer.from(signatureEncoded, 'base64url');
+  const payload = JSON.parse(payloadBytes.toString('utf8'));
+  assert.equal(verifyBytes('RSA-SHA256', payloadBytes, publicKey, signature), true);
   assert.equal(payload.companyId, 'company-test');
   assert.equal(payload.licenseId, license.licenseId);
   assert.equal(payload.maxDevices, 1);
