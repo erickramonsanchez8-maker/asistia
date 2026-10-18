@@ -107,8 +107,10 @@
       punch(employeeId, eventType, source) {
         if (!employeeId) throw new Error('Falta el identificador del empleado.');
         if (!['clock_in', 'clock_out'].includes(eventType)) throw new Error('Tipo de asistencia no válido.');
+        const eventSource = source || 'admin';
+        if (!['web', 'admin', 'kiosk'].includes(eventSource)) throw new Error('Origen de asistencia no válido.');
         return request('/api/attendance/events', {
-          method: 'POST', body: { employeeId: String(employeeId), eventType, source: source || 'desktop' }
+          method: 'POST', body: { employeeId: String(employeeId), eventType, source: eventSource }
         });
       },
       attendance(params) {
