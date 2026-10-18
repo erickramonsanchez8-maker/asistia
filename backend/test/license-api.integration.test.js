@@ -55,7 +55,7 @@ before(async () => {
       DATABASE_PATH: databasePath, JWT_SECRET: 'test-secret-which-is-at-least-32-characters-long',
       BOOTSTRAP_COMPANY_NAME: 'Empresa de licencias', BOOTSTRAP_ADMIN_NAME: 'Admin prueba',
       BOOTSTRAP_ADMIN_EMAIL: 'license-test@example.com', BOOTSTRAP_ADMIN_PASSWORD: 'Password-seguro-12345',
-      ASISTIA_LICENSE_PUBLIC_KEY: publicKey.replace(/\n/g, '\\n'), ASISTIA_LICENSE_ENFORCEMENT: 'false', CORS_ORIGIN: baseUrl },
+      ASISTIA_LICENSE_PUBLIC_KEY: publicKey.replace(/\n/g, '\\n'), ASISTIA_LICENSE_ENFORCEMENT: 'true', CORS_ORIGIN: baseUrl },
     stdio: 'ignore'
   });
   const deadline = Date.now() + 12000;
