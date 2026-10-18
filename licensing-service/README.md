@@ -30,6 +30,7 @@ La clave pública correspondiente debe configurarse en la API local de ASISTIA c
 - `POST /v1/activate`: activar un código de un solo uso.
 - `POST /v1/licenses/refresh`: renovar documento firmado de una activación.
 - `POST /v1/licenses/deactivate`: desactivar dispositivo.
+- `POST /v1/admin/licenses/:id/activation-code`: emitir un nuevo código de un solo uso para una licencia activa (Bearer administrativo); requiere cupo de dispositivo disponible.
 - `POST /v1/admin/licenses/:id/renew`: extender vigencia (Bearer administrativo).
 - `POST /v1/admin/licenses/:id/revoke`: revocación remota (Bearer administrativo).
 
