@@ -6,7 +6,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { generateKeyPairSync } from 'node:crypto';
+import { generateKeyPairSync, verify as verifyBytes } from 'node:crypto';
 
 const serviceDir = fileURLToPath(new URL('..', import.meta.url));
 const adminToken = 'test-admin-token-which-is-at-least-32-characters-long';
