@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
+import express from 'express';
 import { generateKeyPairSync, sign as signBytes } from 'node:crypto';
 
 const backendDir = fileURLToPath(new URL('..', import.meta.url));
