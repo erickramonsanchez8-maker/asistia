@@ -256,6 +256,7 @@ input,select,textarea{transition:border-color .18s,box-shadow .18s,background .1
 <div class="toast-wrap" id="toasts"></div>
 <div class="print-root" id="printRoot"></div>
 <div id="busy" class="busy hidden" role="status" aria-live="polite"><div class="busy-box">Un momento…</div></div>
+<script src="./desktop/api-client.js"></script>
 <script>
 (function(){
 "use strict";
@@ -1337,7 +1338,8 @@ const NAV = [
   ["settings","Configuración"],
   ["backup","Respaldos y recuperación"],
   ["audit","Auditoría"],
-  ["compliance","Cumplimiento LFT"]
+  ["compliance","Cumplimiento LFT"],
+  ["api","Conexión con API (beta)"]
 ];
 
 function renderAdmin(){
@@ -1390,8 +1392,52 @@ function renderSection(){
     case "backup": return viewBackup();
     case "audit": return viewAudit();
     case "compliance": return viewCompliance();
+    case "api": return viewApiConnection();
     default: return "";
   }
+}
+
+function viewApiConnection(){
+  const ready = !!(window.ASISTIAApiClient && window.ASISTIAApiClient.createClient);
+  const session = window.__asistiaApiClient;
+  const user = session && session.currentUser;
+  return `<section class="section-head"><div><p class="eyebrow">INTEGRACIÓN · FASE 1</p><h2>Conexión con ASISTIA API</h2><p class="muted">Diagnóstico del backend y consulta de datos del servidor. Esta pantalla todavía no sincroniza ni modifica los registros locales de este archivo.</p></div></section>
+    <div class="grid two-col">
+      <article class="card"><h3>Servidor local</h3><div class="field"><label for="apiBaseUrl">URL de la API</label><input id="apiBaseUrl" type="url" value="http://127.0.0.1:3000" placeholder="http://127.0.0.1:3000"><small class="hint">HTTP solo se permite para localhost. Un servidor remoto debe usar HTTPS.</small></div><button class="btn btn-primary" id="apiTestBtn" ${ready?"":"disabled"}>Probar conexión</button><p id="apiConnectionResult" class="hint" role="status" aria-live="polite">${ready?"Sin comprobar.":"No se cargó desktop/api-client.js. Abre el proyecto conservando la carpeta desktop."}</p></article>
+      <article class="card"><h3>Acceso al servidor</h3><form id="apiLoginForm"><div class="field"><label for="apiEmail">Correo de usuario de la API</label><input id="apiEmail" type="email" autocomplete="username" required></div><div class="field"><label for="apiPassword">Contraseña</label><input id="apiPassword" type="password" autocomplete="current-password" required></div><button class="btn btn-primary" type="submit" ${ready?"":"disabled"}>Iniciar sesión en API</button> <button class="btn btn-ghost" type="button" id="apiLogoutBtn">Cerrar sesión API</button></form><p id="apiAuthResult" class="hint" role="status" aria-live="polite">${user?"Sesión de API activa: "+escapeHtml(user.name||user.email||user.role):"No has iniciado sesión en la API."}</p></article>
+    </div>
+    <div class="grid two-col" style="margin-top:16px"><article class="card"><h3>Datos del servidor</h3><p class="muted">Las consultas requieren iniciar sesión en la API. No cambian los datos locales.</p><div class="actions"><button class="btn btn-ghost" id="apiEmployeesBtn" ${user?"":"disabled"}>Consultar empleados</button><button class="btn btn-ghost" id="apiLicenseBtn" ${user && user.role==="admin"?"":"disabled"}>Consultar licencia</button></div><pre id="apiDataResult" class="code-block" style="white-space:pre-wrap;overflow-wrap:anywhere">Aquí aparecerán los resultados de consulta.</pre></article><article class="card"><h3>Importante</h3><ul><li>El inicio de sesión de esta API es independiente del administrador local de este archivo.</li><li>La contraseña no se guarda. El token de API vive solo en memoria y se elimina al cerrar sesión o si vence.</li><li>No se importan empleados ni asistencias automáticamente; primero habrá que revisar duplicados, permisos y respaldos.</li></ul></article></div>`;
+}
+
+function bindApiSection(){
+  const $ = id => document.getElementById(id);
+  const result = $("apiConnectionResult");
+  const authResult = $("apiAuthResult");
+  const dataResult = $("apiDataResult");
+  const ready = !!(window.ASISTIAApiClient && window.ASISTIAApiClient.createClient);
+  const getClient = () => {
+    if(!ready) throw new Error("No se cargó desktop/api-client.js. Conserva la carpeta desktop junto al HTML.");
+    const url = $("apiBaseUrl").value.trim();
+    if(!window.__asistiaApiClient || window.__asistiaApiClient.baseUrl !== window.ASISTIAApiClient.normalizeBaseUrl(url)){
+      window.__asistiaApiClient = window.ASISTIAApiClient.createClient({baseUrl:url});
+    }
+    return window.__asistiaApiClient;
+  };
+  if($("apiTestBtn")) $("apiTestBtn").onclick = async ()=>{
+    result.textContent = "Conectando…";
+    try{ const data = await getClient().health(); result.textContent = "Conexión correcta · "+(data.service||"ASISTIA API")+" · "+(data.status||"disponible"); }
+    catch(e){ result.textContent = e.message; }
+  };
+  if($("apiLoginForm")) $("apiLoginForm").onsubmit = async e=>{
+    e.preventDefault(); authResult.textContent = "Validando credenciales…";
+    try{ const session = await getClient().login($("apiEmail").value,$("apiPassword").value); $("apiPassword").value = ""; authResult.textContent = "Sesión API activa: "+(session.user.name||session.user.email||session.user.role)+" · token temporal en memoria."; bindApiSection(); }
+    catch(err){ authResult.textContent = err.message; }
+  };
+  if($("apiLogoutBtn")) $("apiLogoutBtn").onclick = ()=>{ if(window.__asistiaApiClient) window.__asistiaApiClient.logout(); authResult.textContent = "Sesión de API cerrada."; renderAdmin(); };
+  if($("apiEmployeesBtn")) $("apiEmployeesBtn").onclick = async ()=>{ dataResult.textContent = "Consultando…"; try{ const data = await getClient().employees({limit:100,offset:0}); dataResult.textContent = JSON.stringify(data,null,2); }catch(err){ dataResult.textContent = err.message; } };
+  if($("apiLicenseBtn")) $("apiLicenseBtn").onclick = async ()=>{ dataResult.textContent = "Consultando licencia…"; try{ const data = await getClient().licenseStatus(); dataResult.textContent = JSON.stringify(data,null,2); }catch(err){ dataResult.textContent = err.message; } };
+  if($("apiEmployeesBtn")) $("apiEmployeesBtn").disabled = !(window.__asistiaApiClient && window.__asistiaApiClient.isAuthenticated);
+  if($("apiLicenseBtn")) $("apiLicenseBtn").disabled = !(window.__asistiaApiClient && window.__asistiaApiClient.isAuthenticated && window.__asistiaApiClient.currentUser && window.__asistiaApiClient.currentUser.role==="admin");
 }
 
 function statsForDate(isoDate){
@@ -2152,6 +2198,7 @@ function viewAudit(){
 }
 
 function bindSection(){
+  if(ui.adminSection==="api") bindApiSection();
   document.querySelectorAll("[data-act]").forEach(b=> b.onclick = ()=>{
     const a = b.dataset.act;
     if(a==="newEmp") openEmpEditor();
