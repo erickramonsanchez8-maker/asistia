@@ -359,6 +359,10 @@ app.post('/api/license/activate', authenticate, roles('admin'), async (req,res,n
     }).refine(value => Boolean(value.signedDocument) !== Boolean(value.activationCode), 'Proporciona signedDocument o activationCode, pero no ambos.').parse(req.body);
     const publicKey=licensePublicKey();
     if (!publicKey) throw appError(503,'La verificación de licencias no está configurada en este equipo.');
+    const existingActivation = db.prepare("SELECT activation_secret_encrypted,remote_status FROM license_state WHERE company_id=?").get(req.user.companyId);
+    if (input.signedDocument && existingActivation?.activation_secret_encrypted && existingActivation.remote_status === 'active') {
+      throw appError(409,'Desactiva primero la activación remota antes de instalar una licencia manual.');
+    }
     let signedDocument = input.signedDocument;
     let activationSecretEncrypted = null;
     let deviceId = null;
@@ -406,16 +410,30 @@ app.post('/api/license/refresh', authenticate, roles('admin'), async (req,res,ne
     if (!saved?.activation_secret_encrypted || !saved.device_id) throw appError(409,'Esta instalación no tiene una activación remota renovable.');
     if (saved.remote_status !== 'active') throw appError(403,'La activación de esta instalación no está activa.');
     const activationSecret = decryptActivationSecret(saved.activation_secret_encrypted);
-    const remote = await callRemoteLicensing('/v1/licenses/refresh', {
-      licenseId:saved.license_id, deviceId:saved.device_id, activationSecret
-    });
+    let remote;
+    try {
+      remote = await callRemoteLicensing('/v1/licenses/refresh', {
+        licenseId:saved.license_id, deviceId:saved.device_id, activationSecret
+      });
+    } catch (error) {
+      if (error.status === 403) {
+        const timestamp = now();
+        db.prepare("UPDATE license_state SET remote_status='revoked',last_validated_at=?,updated_at=? WHERE company_id=?")
+          .run(timestamp,timestamp,req.user.companyId);
+        writeAudit(req.user.companyId,req.user.id,'license.remote_rejected','license',saved.license_id,{httpStatus:403});
+      }
+      throw error;
+    }
     if (typeof remote.signedDocument !== 'string') throw appError(503,'La respuesta de renovación remota está incompleta.');
     let license;
     try { license = verifyLicenseDocument(remote.signedDocument, licensePublicKey(), new Date()); }
     catch(e) { throw appError(422,e.message || 'El documento renovado no es válido.'); }
     if (license.companyId !== req.user.companyId || license.licenseId !== saved.license_id) throw appError(403,'La renovación no corresponde a esta instalación.');
-    const current = verifyLicenseDocument(saved.signed_document, licensePublicKey(), new Date(0));
-    if (license.licenseVersion < current.licenseVersion) throw appError(409,'El servicio devolvió una versión de licencia anterior.');
+    // El documento almacenado ya fue verificado al activarse; extraemos solo su versión para evitar comparar fechas contra una hora artificial.
+    let currentVersion = 0;
+    try { currentVersion = Number(JSON.parse(Buffer.from(saved.signed_document.split('.')[0], 'base64url').toString('utf8')).licenseVersion) || 0; }
+    catch { throw appError(500, 'No se pudo comprobar la versión de la licencia almacenada.'); }
+    if (license.licenseVersion < currentVersion) throw appError(409,'El servicio devolvió una versión de licencia anterior.');
     const timestamp = now();
     db.prepare("UPDATE license_state SET signed_document=?,last_validated_at=?,updated_at=?,remote_status='active' WHERE company_id=?")
       .run(remote.signedDocument,timestamp,timestamp,req.user.companyId);
