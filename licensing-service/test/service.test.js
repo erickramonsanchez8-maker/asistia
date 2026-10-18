@@ -126,3 +126,70 @@ test('renovación exige secreto válido y revocación impide nuevas renovaciones
   }});
   assert.equal(denied.status, 403);
 });
+
+
+test('rechaza datos inválidos y no consume el código si la empresa no coincide', async () => {
+  const invalid = await request('/v1/admin/licenses', { method: 'POST', admin: true, body: {
+    companyId: 'company-invalid', planCode: 'bad plan!', maxEmployees: 0, maxDevices: 1, durationDays: 30
+  }});
+  assert.equal(invalid.status, 400);
+
+  const issued = await request('/v1/admin/licenses', { method: 'POST', admin: true, body: {
+    companyId: 'company-boundary', planCode: 'basic', maxEmployees: 5, maxDevices: 1, durationDays: 30
+  }});
+  assert.equal(issued.status, 201);
+  const wrongCompany = await request('/v1/activate', { method: 'POST', body: {
+    activationCode: issued.data.activationCode, companyId: 'another-company', deviceId: 'device-boundary-0001'
+  }});
+  assert.equal(wrongCompany.status, 403);
+
+  const correctCompany = await request('/v1/activate', { method: 'POST', body: {
+    activationCode: issued.data.activationCode, companyId: 'company-boundary', deviceId: 'device-boundary-0001'
+  }});
+  assert.equal(correctCompany.status, 200);
+});
+
+test('desactivar libera el cupo y el código nuevo permite reactivar sin duplicar el dispositivo', async () => {
+  const issued = await request('/v1/admin/licenses', { method: 'POST', admin: true, body: {
+    companyId: 'company-device-cycle', planCode: 'basic', maxEmployees: 10, maxDevices: 1, durationDays: 30
+  }});
+  assert.equal(issued.status, 201);
+  const deviceId = 'device-cycle-0001';
+  const first = await request('/v1/activate', { method: 'POST', body: {
+    activationCode: issued.data.activationCode, companyId: 'company-device-cycle', deviceId
+  }});
+  assert.equal(first.status, 200);
+
+  const deactivate = await request('/v1/licenses/deactivate', { method: 'POST', body: {
+    licenseId: first.data.license.licenseId, deviceId, activationSecret: first.data.activationSecret
+  }});
+  assert.equal(deactivate.status, 200);
+
+  const code = await request('/v1/admin/licenses/' + first.data.license.licenseId + '/activation-code', {
+    method: 'POST', admin: true, body: {}
+  });
+  assert.equal(code.status, 201);
+
+  const secondDevice = await request('/v1/activate', { method: 'POST', body: {
+    activationCode: code.data.activationCode, companyId: 'company-device-cycle', deviceId: 'device-cycle-0002'
+  }});
+  assert.equal(secondDevice.status, 200);
+
+  const blocked = await request('/v1/admin/licenses/' + first.data.license.licenseId + '/activation-code', {
+    method: 'POST', admin: true, body: {}
+  });
+  assert.equal(blocked.status, 409);
+});
+
+test('protege las operaciones administrativas con el token exacto', async () => {
+  const result = await request('/v1/admin/licenses', { method: 'POST', body: {
+    companyId: 'company-auth-check', planCode: 'basic', maxEmployees: 10, maxDevices: 1, durationDays: 30
+  }});
+  assert.equal(result.status, 401);
+  const wrongToken = await fetch(baseUrl + '/v1/admin/licenses', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + adminToken + 'x', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ companyId: 'company-auth-check', planCode: 'basic', maxEmployees: 10, maxDevices: 1, durationDays: 30 })
+  });
+  assert.equal(wrongToken.status, 401);
+});
