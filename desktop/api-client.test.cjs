@@ -65,7 +65,7 @@ test('valida tipo de evento antes de enviar una marca de asistencia', async () =
     baseUrl: 'http://127.0.0.1:3000',
     fetch: async () => { calls++; return fakeResponse(200, { ok: true }); }
   });
-  await assert.rejects(client.punch('employee-1', 'break'), /Tipo de asistencia no válido/);
+  assert.throws(() => client.punch('employee-1', 'break'), /Tipo de asistencia no válido/);
   assert.equal(calls, 0);
   await client.punch('employee-1', 'clock_in');
   assert.equal(calls, 1);
