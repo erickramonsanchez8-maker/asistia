@@ -6,10 +6,11 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import Database from 'better-sqlite3';
 import { generateKeyPairSync, sign as signBytes } from 'node:crypto';
 
 const backendDir = fileURLToPath(new URL('..', import.meta.url));
-let child, baseUrl, tempDir, token, companyId, privateKey, publicKey;
+let child, baseUrl, tempDir, databasePath, token, companyId, privateKey, publicKey;
 
 async function freePort() {
   const server = createServer();
@@ -47,10 +48,11 @@ before(async () => {
   tempDir = await mkdtemp(join(tmpdir(), 'asistia-license-api-test-'));
   const port = await freePort();
   baseUrl = 'http://127.0.0.1:' + port;
+  databasePath = join(tempDir, 'test.sqlite');
   child = spawn(process.execPath, ['src/server.js'], {
     cwd: backendDir,
     env: { ...process.env, NODE_ENV: 'test', HOST: '127.0.0.1', PORT: String(port),
-      DATABASE_PATH: join(tempDir, 'test.sqlite'), JWT_SECRET: 'test-secret-which-is-at-least-32-characters-long',
+      DATABASE_PATH: databasePath, JWT_SECRET: 'test-secret-which-is-at-least-32-characters-long',
       BOOTSTRAP_COMPANY_NAME: 'Empresa de licencias', BOOTSTRAP_ADMIN_NAME: 'Admin prueba',
       BOOTSTRAP_ADMIN_EMAIL: 'license-test@example.com', BOOTSTRAP_ADMIN_PASSWORD: 'Password-seguro-12345',
       ASISTIA_LICENSE_PUBLIC_KEY: publicKey.replace(/\n/g, '\\n'), ASISTIA_LICENSE_ENFORCEMENT: 'false', CORS_ORIGIN: baseUrl },
@@ -96,7 +98,7 @@ test('license activation rejects malformed and cross-company documents', async (
 });
 
 test('valid signed license activates and status does not disclose the signed document', async () => {
-  const signedDocument = license();
+  const signedDocument = license({ maxEmployees: 1 });
   const activation = await request('/api/license/activate', { method: 'POST', body: { signedDocument } });
   assert.equal(activation.status, 200, JSON.stringify(activation.data));
   assert.equal(activation.data.ok, true);
@@ -109,6 +111,61 @@ test('valid signed license activates and status does not disclose the signed doc
   assert.equal(status.data.license.companyId, companyId);
   assert.equal(status.data.license.maxEmployees, 50);
   assert.equal('signedDocument' in status.data, false);
+});
+
+
+test('sin licencia no permite crear empleados; con licencia aplica el límite de empleados activos', async () => {
+  const blocked = await request('/api/employees', { method: 'POST', body: { employeeNumber: 'NO-LIC-1', fullName: 'Empleado sin licencia' } });
+  assert.equal(blocked.status, 402);
+
+  const signedDocument = license({ licenseId: 'employee-cap-license', maxEmployees: 1 });
+  const activation = await request('/api/license/activate', { method: 'POST', body: { signedDocument } });
+  assert.equal(activation.status, 200, JSON.stringify(activation.data));
+
+  const first = await request('/api/employees', { method: 'POST', body: { employeeNumber: 'CAP-001', fullName: 'Empleado de prueba' } });
+  assert.equal(first.status, 201, JSON.stringify(first.data));
+  const second = await request('/api/employees', { method: 'POST', body: { employeeNumber: 'CAP-002', fullName: 'Segundo empleado' } });
+  assert.equal(second.status, 409);
+  assert.match(second.data.error, /hasta 1 empleados activos/i);
+});
+
+test('el historial y la exportación siguen accesibles después del vencimiento de la licencia', async () => {
+  const signedDocument = license({ licenseId: 'history-license', maxEmployees: 2 });
+  const activation = await request('/api/license/activate', { method: 'POST', body: { signedDocument } });
+  assert.equal(activation.status, 200, JSON.stringify(activation.data));
+
+  const employee = await request('/api/employees', { method: 'POST', body: { employeeNumber: 'HIST-001', fullName: 'Empleado historial' } });
+  assert.equal(employee.status, 201, JSON.stringify(employee.data));
+  const employeeId = employee.data.employee.id;
+  const clockIn = await request('/api/attendance/events', { method: 'POST', body: { employeeId, eventType: 'clock_in', source: 'admin' } });
+  assert.equal(clockIn.status, 201, JSON.stringify(clockIn.data));
+
+  const now = Date.now();
+  const expiredDocument = license({
+    licenseId: 'history-license', issuedAt: new Date(now - 30 * 86400000).toISOString(),
+    expiresAt: new Date(now - 2 * 86400000).toISOString(),
+    offlineGraceUntil: new Date(now - 86400000).toISOString(), maxEmployees: 2
+  });
+  const db = new Database(databasePath);
+  try {
+    db.prepare('UPDATE license_state SET signed_document=?, last_validated_at=? WHERE company_id=?')
+      .run(expiredDocument, new Date(now - 86400000).toISOString(), companyId);
+  } finally { db.close(); }
+
+  const status = await request('/api/license/status');
+  assert.equal(status.status, 200);
+  assert.equal(status.data.status, 'expired');
+  const events = await request('/api/attendance/events');
+  assert.equal(events.status, 200);
+  assert.equal(events.data.events.length, 1);
+  assert.equal(events.data.events[0].employeeId, employeeId);
+
+  const csvResponse = await fetch(baseUrl + '/api/reports/attendance.csv', { headers: { Authorization: 'Bearer ' + token } });
+  assert.equal(csvResponse.status, 200);
+  assert.match(csvResponse.headers.get('content-type'), /text\/csv/i);
+  const csv = await csvResponse.text();
+  assert.match(csv, /HIST-001/);
+  assert.match(csv, /Empleado historial/);
 });
 
 test('expired license is rejected and does not replace the active license', async () => {
