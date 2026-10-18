@@ -1,0 +1,16 @@
+{
+  "name": "asistia-licensing-service",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Servicio remoto de activación y licencias firmadas de ASISTIA",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": { "start": "node src/server.js", "test": "node --test" },
+  "dependencies": {
+    "better-sqlite3": "^11.8.1",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.0.0",
+    "zod": "^3.24.2"
+  }
+}
