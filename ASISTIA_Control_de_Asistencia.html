@@ -1406,7 +1406,7 @@ function viewApiConnection(){
       <article class="card"><h3>Servidor local</h3><div class="field"><label for="apiBaseUrl">URL de la API</label><input id="apiBaseUrl" type="url" value="http://127.0.0.1:3000" placeholder="http://127.0.0.1:3000"><small class="hint">HTTP solo se permite para localhost. Un servidor remoto debe usar HTTPS.</small></div><button class="btn btn-primary" id="apiTestBtn" ${ready?"":"disabled"}>Probar conexión</button><p id="apiConnectionResult" class="hint" role="status" aria-live="polite">${ready?"Sin comprobar.":"No se cargó desktop/api-client.js. Abre el proyecto conservando la carpeta desktop."}</p></article>
       <article class="card"><h3>Acceso al servidor</h3><form id="apiLoginForm"><div class="field"><label for="apiEmail">Correo de usuario de la API</label><input id="apiEmail" type="email" autocomplete="username" required></div><div class="field"><label for="apiPassword">Contraseña</label><input id="apiPassword" type="password" autocomplete="current-password" required></div><button class="btn btn-primary" type="submit" ${ready?"":"disabled"}>Iniciar sesión en API</button> <button class="btn btn-ghost" type="button" id="apiLogoutBtn">Cerrar sesión API</button></form><p id="apiAuthResult" class="hint" role="status" aria-live="polite">${user?"Sesión de API activa: "+escapeHtml(user.name||user.email||user.role):"No has iniciado sesión en la API."}</p></article>
     </div>
-    <div class="grid two-col" style="margin-top:16px"><article class="card"><h3>Datos del servidor</h3><p class="muted">Las consultas requieren iniciar sesión en la API. No cambian los datos locales.</p><div class="actions"><button class="btn btn-ghost" id="apiEmployeesBtn" ${user?"":"disabled"}>Consultar empleados</button><button class="btn btn-ghost" id="apiLicenseBtn" ${user && user.role==="admin"?"":"disabled"}>Consultar licencia</button></div><pre id="apiDataResult" class="code-block" style="white-space:pre-wrap;overflow-wrap:anywhere">Aquí aparecerán los resultados de consulta.</pre></article><article class="card"><h3>Importante</h3><ul><li>El inicio de sesión de esta API es independiente del administrador local de este archivo.</li><li>La contraseña no se guarda. El token de API vive solo en memoria y se elimina al cerrar sesión o si vence.</li><li>No se importan empleados ni asistencias automáticamente; primero habrá que revisar duplicados, permisos y respaldos.</li></ul></article></div>`;
+    <div class="grid two-col" style="margin-top:16px"><article class="card"><h3>Alta de empleado en API</h3><p class="muted">Crea un registro exclusivamente en la base del servidor. No modifica la lista local del archivo.</p><form id="apiEmployeeForm"><div class="field"><label for="apiEmployeeNumber">Número de empleado *</label><input id="apiEmployeeNumber" type="text" maxlength="40" required></div><div class="field"><label for="apiEmployeeName">Nombre completo *</label><input id="apiEmployeeName" type="text" maxlength="160" required></div><div class="field"><label for="apiEmployeeEmail">Correo (opcional)</label><input id="apiEmployeeEmail" type="email" maxlength="254"></div><div class="field"><label for="apiEmployeeRfc">RFC (opcional)</label><input id="apiEmployeeRfc" type="text" maxlength="13" autocomplete="off"></div><div class="field"><label for="apiEmployeeBranch">Sucursal</label><input id="apiEmployeeBranch" type="text" maxlength="100" value="Principal" required></div><button class="btn btn-primary" id="apiCreateEmployeeBtn" type="submit" \${user && ["admin","supervisor"].includes(user.role)?"":"disabled"}>Crear empleado en API</button><p id="apiEmployeeResult" class="hint" role="status" aria-live="polite">No se ha enviado ningún cambio.</p></form></article><article class="card"><h3>Datos del servidor</h3><p class="muted">Las consultas requieren iniciar sesión en la API. No cambian los datos locales.</p><div class="actions"><button class="btn btn-ghost" id="apiEmployeesBtn" ${user?"":"disabled"}>Consultar empleados</button><button class="btn btn-ghost" id="apiLicenseBtn" ${user && user.role==="admin"?"":"disabled"}>Consultar licencia</button></div><pre id="apiDataResult" class="code-block" style="white-space:pre-wrap;overflow-wrap:anywhere">Aquí aparecerán los resultados de consulta.</pre></article><article class="card"><h3>Importante</h3><ul><li>El inicio de sesión de esta API es independiente del administrador local de este archivo.</li><li>La contraseña no se guarda. El token de API vive solo en memoria y se elimina al cerrar sesión o si vence.</li><li>No se importan empleados ni asistencias automáticamente; primero habrá que revisar duplicados, permisos y respaldos.</li></ul></article></div>`;
 }
 
 function bindApiSection(){
@@ -1435,8 +1435,31 @@ function bindApiSection(){
   };
   if($("apiLogoutBtn")) $("apiLogoutBtn").onclick = ()=>{ if(window.__asistiaApiClient) window.__asistiaApiClient.logout(); authResult.textContent = "Sesión de API cerrada."; renderAdmin(); };
   if($("apiEmployeesBtn")) $("apiEmployeesBtn").onclick = async ()=>{ dataResult.textContent = "Consultando…"; try{ const data = await getClient().employees({limit:100,offset:0}); dataResult.textContent = JSON.stringify(data,null,2); }catch(err){ dataResult.textContent = err.message; } };
+   if($("apiEmployeeForm")) $("apiEmployeeForm").onsubmit = async e=>{
+     e.preventDefault();
+     const form = $("apiEmployeeForm");
+     const status = $("apiEmployeeResult");
+     const submit = $("apiCreateEmployeeBtn");
+     if(!window.__asistiaApiClient || !window.__asistiaApiClient.isAuthenticated){ status.textContent = "Inicia sesión en la API antes de crear empleados."; return; }
+     const role = window.__asistiaApiClient.currentUser && window.__asistiaApiClient.currentUser.role;
+     if(!["admin","supervisor"].includes(role)){ status.textContent = "Tu cuenta no tiene permisos para crear empleados."; return; }
+     const employee = {employeeNumber:$("apiEmployeeNumber").value.trim(),fullName:$("apiEmployeeName").value.trim(),branch:$("apiEmployeeBranch").value.trim() || "Principal"};
+     const email = $("apiEmployeeEmail").value.trim();
+     const rfc = $("apiEmployeeRfc").value.trim().toUpperCase();
+     if(email) employee.email = email;
+     if(rfc) employee.rfc = rfc;
+     submit.disabled = true; status.textContent = "Guardando en el servidor…";
+     try{
+       const result = await getClient().createEmployee(employee);
+       status.textContent = "Empleado creado en API: "+(result.employee.fullName||employee.fullName)+" · número "+(result.employee.employeeNumber||employee.employeeNumber)+".";
+       form.reset(); $("apiEmployeeBranch").value = "Principal";
+       dataResult.textContent = "Empleado creado correctamente. Pulsa «Consultar empleados» para actualizar el listado.";
+     }catch(err){ status.textContent = err.message; }
+     finally{ submit.disabled = !window.__asistiaApiClient || !window.__asistiaApiClient.isAuthenticated || !["admin","supervisor"].includes((window.__asistiaApiClient.currentUser||{}).role); }
+   };
   if($("apiLicenseBtn")) $("apiLicenseBtn").onclick = async ()=>{ dataResult.textContent = "Consultando licencia…"; try{ const data = await getClient().licenseStatus(); dataResult.textContent = JSON.stringify(data,null,2); }catch(err){ dataResult.textContent = err.message; } };
   if($("apiEmployeesBtn")) $("apiEmployeesBtn").disabled = !(window.__asistiaApiClient && window.__asistiaApiClient.isAuthenticated);
+   if($("apiCreateEmployeeBtn")) $("apiCreateEmployeeBtn").disabled = !(window.__asistiaApiClient && window.__asistiaApiClient.isAuthenticated && window.__asistiaApiClient.currentUser && ["admin","supervisor"].includes(window.__asistiaApiClient.currentUser.role));
   if($("apiLicenseBtn")) $("apiLicenseBtn").disabled = !(window.__asistiaApiClient && window.__asistiaApiClient.isAuthenticated && window.__asistiaApiClient.currentUser && window.__asistiaApiClient.currentUser.role==="admin");
 }
 
