@@ -115,6 +115,8 @@ test('valid signed license activates and status does not disclose the signed doc
 
 
 test('sin licencia no permite crear empleados; con licencia aplica el límite de empleados activos', async () => {
+  const db = new Database(databasePath);
+  try { db.prepare('DELETE FROM license_state WHERE company_id=?').run(companyId); } finally { db.close(); }
   const blocked = await request('/api/employees', { method: 'POST', body: { employeeNumber: 'NO-LIC-1', fullName: 'Empleado sin licencia' } });
   assert.equal(blocked.status, 402);
 
