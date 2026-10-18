@@ -35,8 +35,9 @@ function license(overrides = {}) {
     offlineGraceUntil: new Date(now + 14 * 86400000).toISOString(),
     maxEmployees: 50, maxDevices: 2, licenseVersion: 1, status: 'active', ...overrides
   };
-  const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url');
-  return encoded + '.' + signBytes('RSA-SHA256', Buffer.from(encoded), privateKey).toString('base64url');
+  const payloadBytes = Buffer.from(JSON.stringify(payload), 'utf8');
+  const encoded = payloadBytes.toString('base64url');
+  return encoded + '.' + signBytes('RSA-SHA256', payloadBytes, privateKey).toString('base64url');
 }
 
 before(async () => {
