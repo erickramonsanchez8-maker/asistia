@@ -1,6 +1,6 @@
 # ASISTIA Desktop: arquitectura de distribución y licencias
 
-**Estado:** diseño de implementación; todavía no habilita ni valida licencias en ejecución.  
+**Estado:** implementación parcial en la rama `feature/desktop-licensing`; el backend local valida documentos firmados y existe un servicio remoto de desarrollo. Aún no está integrado de extremo a extremo ni listo para producción.  
 **Base inspeccionada:** API Node.js/Express/SQLite 0.3 en `backend/src/server.js`; interfaz heredada `ASISTIA_Control_de_Asistencia.html`, que aún usa `localStorage`.  
 **Decisión de producto:** una computadora central por empresa, funcionamiento local sin internet durante varios días y licencia por empresa con límites de empleados y dispositivos.
 
@@ -52,7 +52,15 @@ La forma definitiva de las tablas debe revisarse contra la base existente y sus 
 
 ## 5. Contrato de API objetivo
 
-Los siguientes endpoints son una propuesta; **no están implementados por este documento**:
+### Implementado parcialmente en la rama
+
+- Backend local: `GET /api/license/status` y `POST /api/license/activate` para guardar/verificar un documento firmado.
+- Servicio remoto separado en `licensing-service/`: `GET /v1/health`, `POST /v1/admin/licenses`, `POST /v1/admin/licenses/:id/activation-code`, `POST /v1/activate`, `POST /v1/licenses/refresh`, `POST /v1/licenses/deactivate`, `POST /v1/admin/licenses/:id/renew` y `POST /v1/admin/licenses/:id/revoke`.
+- La activación, emisión, renovación y revocación están cubiertas por pruebas de integración en desarrollo. El servicio remoto todavía no está conectado al backend local ni a un flujo real de cobro.
+
+### Contrato objetivo / integración pendiente
+
+- El cliente de escritorio debe llamar al servicio remoto y después instalar el documento firmado en el backend local.
 
 - `GET /api/license/status`: estado local verificado, plan, límites y fechas; no devuelve secretos ni el documento de pago.
 - `POST /api/license/activate`: validar código de activación con el servicio remoto y guardar el documento firmado.
@@ -77,9 +85,9 @@ Los errores de conectividad no deben convertir una licencia desconocida en váli
 4. Aplicar límite de empleados dentro del endpoint de creación, con pruebas de concurrencia y de aislamiento por empresa.
 
 ### Fase C — Servicio remoto
-1. Implementar servicio remoto separado con almacenamiento de licencias, activaciones y estados de pago.
+1. Endurecer y desplegar el servicio remoto separado con almacenamiento de licencias y activaciones; integrar proveedor de pagos después de elegirlo.
 2. Mantener la clave privada solo en el servidor remoto/gestor de secretos.
-3. Probar activación duplicada, revocación, renovación, caída del servicio, respuesta repetida y recuperación tras volver internet.
+3. Probar activación duplicada, límites de dispositivos, revocación, renovación, caída del servicio, respuesta repetida y recuperación tras volver internet.
 4. No dar por pagada una suscripción hasta recibir confirmación verificada del proveedor de pagos.
 
 ### Fase D — Aplicación de escritorio
