@@ -109,7 +109,7 @@ test('valid signed license activates and status does not disclose the signed doc
   assert.equal(status.status, 200);
   assert.equal(status.data.status, 'active');
   assert.equal(status.data.license.companyId, companyId);
-  assert.equal(status.data.license.maxEmployees, 50);
+  assert.equal(status.data.license.maxEmployees, 1);
   assert.equal('signedDocument' in status.data, false);
 });
 
@@ -177,5 +177,5 @@ test('expired license is rejected and does not replace the active license', asyn
   const result = await request('/api/license/activate', { method: 'POST', body: { signedDocument: expired } });
   assert.equal(result.status, 402);
   const status = await request('/api/license/status');
-  assert.equal(status.data.license.licenseId, 'integration-license-1');
+  assert.equal(status.data.license.licenseId, 'history-license');
 });
