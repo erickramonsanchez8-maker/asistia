@@ -95,9 +95,9 @@ test('flujo integrado: API real + cliente desktop, empleado, marcas y reporte', 
 
     await assert.rejects(client.punch(created.employee.id, 'clock_out', 'admin'), /entrada pendiente de salida/i);
     const clockIn = await client.punch(created.employee.id, 'clock_in', 'admin');
-    assert.equal(clockIn.event.eventType, 'clock_in');
+    assert.equal(clockIn.event.event_type, 'clock_in');
     const clockOut = await client.punch(created.employee.id, 'clock_out', 'admin');
-    assert.equal(clockOut.event.eventType, 'clock_out');
+    assert.equal(clockOut.event.event_type, 'clock_out');
 
     const from = new Date(Date.now() - 60_000).toISOString();
     const to = new Date(Date.now() + 60_000).toISOString();
