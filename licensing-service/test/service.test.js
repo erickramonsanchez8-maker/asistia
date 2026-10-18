@@ -114,6 +114,11 @@ test('renovación exige secreto válido y revocación impide nuevas renovaciones
     licenseId: license.licenseId, deviceId: 'device-installation-2001', activationSecret: activation.data.activationSecret
   }});
   assert.equal(refreshed.status, 200);
+  const renewed = await request('/v1/admin/licenses/' + license.licenseId + '/renew', {
+    method: 'POST', admin: true, body: { durationDays: 30 }
+  });
+  assert.equal(renewed.status, 200, JSON.stringify(renewed.data));
+  assert.equal(renewed.data.license.version, 2);
   const revoked = await request('/v1/admin/licenses/' + license.licenseId + '/revoke', { method: 'POST', admin: true, body: {} });
   assert.equal(revoked.status, 200);
   const denied = await request('/v1/licenses/refresh', { method: 'POST', body: {
