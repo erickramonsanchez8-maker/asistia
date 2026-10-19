@@ -255,4 +255,8 @@ test('permite programar inicio y vencimiento personalizados y no activar antes d
   }});
   assert.equal(earlyActivation.status, 402);
   assert.match(earlyActivation.data.error, /todavía no inicia/i);
+  const laterDate = new Date(Date.now() + 45 * 86400000).toISOString();
+  const renewal = await request('/v1/admin/licenses/' + issued.data.license.licenseId + '/renew', { method: 'POST', admin: true, body: { expiresAt: laterDate } });
+  assert.equal(renewal.status, 200, JSON.stringify(renewal.data));
+  assert.equal(renewal.data.license.expiresAt, laterDate);
 });
