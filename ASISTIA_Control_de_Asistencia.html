@@ -1430,7 +1430,26 @@ function bindApiSection(){
   };
   if($("apiLoginForm")) $("apiLoginForm").onsubmit = async e=>{
     e.preventDefault(); authResult.textContent = "Validando credenciales…";
-    try{ const session = await getClient().login($("apiEmail").value,$("apiPassword").value); $("apiPassword").value = ""; authResult.textContent = "Sesión API activa: "+(session.user.name||session.user.email||session.user.role)+" · token temporal en memoria."; bindApiSection(); }
+    try{
+      const session = await getClient().login($("apiEmail").value,$("apiPassword").value);
+      $("apiPassword").value = "";
+      authResult.textContent = "Sesión API activa: "+(session.user.name||session.user.email||session.user.role)+" · token temporal en memoria.";
+      bindApiSection();
+      // Revisar el vencimiento al iniciar cada sesión. La API sigue siendo la autoridad
+      // y bloquea escrituras aunque el usuario cierre este aviso.
+      if(session.user.role === "admin"){
+        try{
+          const licenseState = await getClient().licenseStatus();
+          if(licenseState.showExpiryWarning){
+            window.alert("ASISTIA: tu licencia vence en "+licenseState.daysRemaining+" día(s). Contacta al administrador para renovarla.");
+          } else if(licenseState.historyReadOnly){
+            window.alert("ASISTIA está en modo de consulta: la licencia está vencida, suspendida o no activa. Puedes consultar y exportar el historial, pero no registrar nuevas asistencias.");
+          }
+        }catch(licenseError){
+          console.warn("No se pudo consultar el estado de licencia al iniciar sesión.", licenseError);
+        }
+      }
+    }
     catch(err){ authResult.textContent = err.message; }
   };
   if($("apiLogoutBtn")) $("apiLogoutBtn").onclick = ()=>{ if(window.__asistiaApiClient) window.__asistiaApiClient.logout(); authResult.textContent = "Sesión de API cerrada."; renderAdmin(); };
