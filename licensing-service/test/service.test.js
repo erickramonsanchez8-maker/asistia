@@ -193,3 +193,35 @@ test('protege las operaciones administrativas con el token exacto', async () => 
   });
   assert.equal(wrongToken.status, 401);
 });
+
+test('el panel lista licencias y permite suspender y reactivar con auditoría de estado', async () => {
+  const issued = await request('/v1/admin/licenses', { method: 'POST', admin: true, body: {
+    companyId: 'company-suspend-cycle', planCode: 'standard', maxEmployees: 20, maxDevices: 1, durationDays: 60
+  }});
+  assert.equal(issued.status, 201);
+  const licenseId = issued.data.license.licenseId;
+  const list = await request('/v1/admin/licenses?limit=100&offset=0', { admin: true });
+  assert.equal(list.status, 200);
+  assert.ok(list.data.licenses.some(item => item.licenseId === licenseId && item.status === 'active'));
+
+  const activation = await request('/v1/activate', { method: 'POST', body: {
+    activationCode: issued.data.activationCode, companyId: 'company-suspend-cycle', deviceId: 'device-suspend-0001'
+  }});
+  assert.equal(activation.status, 200);
+
+  const suspended = await request('/v1/admin/licenses/' + licenseId + '/suspend', { method: 'POST', admin: true, body: {} });
+  assert.equal(suspended.status, 200);
+  const deniedRefresh = await request('/v1/licenses/refresh', { method: 'POST', body: {
+    licenseId, deviceId: 'device-suspend-0001', activationSecret: activation.data.activationSecret
+  }});
+  assert.equal(deniedRefresh.status, 403);
+
+  const suspendedList = await request('/v1/admin/licenses?limit=100', { admin: true });
+  assert.equal(suspendedList.data.licenses.find(item => item.licenseId === licenseId).status, 'suspended');
+  const resumed = await request('/v1/admin/licenses/' + licenseId + '/resume', { method: 'POST', admin: true, body: {} });
+  assert.equal(resumed.status, 200);
+  const refreshed = await request('/v1/licenses/refresh', { method: 'POST', body: {
+    licenseId, deviceId: 'device-suspend-0001', activationSecret: activation.data.activationSecret
+  }});
+  assert.equal(refreshed.status, 200);
+});
