@@ -55,7 +55,7 @@
         const badge = document.createElement('span'); badge.className = 'state' + (license.status === 'suspended' ? ' suspended' : license.status === 'revoked' ? ' revoked' : '');
         badge.textContent = license.status === 'active' ? 'ACTIVA' : license.status === 'suspended' ? 'SUSPENDIDA' : 'REVOCADA';
         statusCell.append(badge); row.append(statusCell);
-        row.append(makeCell(formatDate(license.expiresAt)));
+        row.append(makeCell(formatDate(license.startsAt) + ' — ' + formatDate(license.expiresAt)));
         row.append(makeCell(String(license.activeDevices) + ' / ' + 'máx. ' + license.maxDevices));
         const actions = document.createElement('td'), group = document.createElement('div'); group.className = 'actions';
         if (license.status === 'active') {
@@ -97,8 +97,13 @@
       planCode: String(form.get('planCode')).trim(),
       maxEmployees: Number(form.get('maxEmployees')),
       maxDevices: Number(form.get('maxDevices')),
-      durationDays: Number(form.get('durationDays'))
+      startsAt: new Date(String(form.get('startsAt')) + 'T00:00:00.000Z').toISOString(),
+      expiresAt: new Date(String(form.get('expiresAt')) + 'T23:59:59.999Z').toISOString()
     };
+    if (String(form.get('expiresAt')) <= String(form.get('startsAt'))) {
+      setStatus($('listStatus'), 'El vencimiento debe ser posterior a la fecha de inicio.', 'error');
+      return;
+    }
     try {
       const result = await api('/v1/admin/licenses', { method: 'POST', body });
       lastIssuedCode = result.activationCode;
@@ -120,10 +125,10 @@
     const { action, id } = button.dataset;
     try {
       if (action === 'renew') {
-        const durationDays = Number(prompt('¿Cuántos días deseas añadir a la vigencia?', '30'));
-        if (!Number.isInteger(durationDays) || durationDays < 1 || durationDays > 3660) return;
-        if (!confirm('¿Renovar la licencia durante ' + durationDays + ' días?')) return;
-        await api('/v1/admin/licenses/' + encodeURIComponent(id) + '/renew', { method: 'POST', body: { durationDays } });
+        const date = prompt('Nueva fecha de vencimiento (AAAA-MM-DD). Debe ser posterior al vencimiento actual.', '');
+        if (!date || !/^\\d{4}-\\d{2}-\\d{2}$/.test(date)) return;
+        if (!confirm('¿Extender la licencia hasta el final del día ' + date + ' UTC?')) return;
+        await api('/v1/admin/licenses/' + encodeURIComponent(id) + '/renew', { method: 'POST', body: { expiresAt: new Date(date + 'T23:59:59.999Z').toISOString() } });
       } else if (action === 'code') {
         if (!confirm('El código nuevo invalida cualquier código de activación pendiente. ¿Continuar?')) return;
         const result = await api('/v1/admin/licenses/' + encodeURIComponent(id) + '/activation-code', { method: 'POST', body: {} });
