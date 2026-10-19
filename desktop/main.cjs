@@ -11,6 +11,12 @@ let backendProcess = null;
 let startupPromise = null;
 
 const userData = app.getPath('userData');
+const logPath = path.join(userData, 'logs', 'asistia-desktop.log');
+function logDiagnostic(level, message) {
+  const line = `[${new Date().toISOString()}] [${level}] ${String(message).replace(/[\\r\\n]+/g, ' ').slice(0, 2000)}\\n`;
+  try { fs.mkdirSync(path.dirname(logPath), { recursive: true }); fs.appendFileSync(logPath, line, 'utf8'); } catch {}
+  if (level === 'ERROR') console.error(line.trim()); else console.log(line.trim());
+}
 const configPath = path.join(userData, 'config.json');
 const bootstrapPath = path.join(userData, 'bootstrap.once.json');
 const dataDir = path.join(userData, 'data');
@@ -38,6 +44,7 @@ function createWindow() {
     minWidth: 980,
     minHeight: 680,
     backgroundColor: '#0b1f3a',
+    icon: path.join(app.getAppPath(), 'desktop', 'assets', 'asistia-logo.png'),
     show: false,
     autoHideMenuBar: true,
     webPreferences: {
@@ -65,7 +72,8 @@ function backendPaths() {
 async function waitForHealth(child, timeoutMs = 20000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    if (child.exitCode !== null) throw new Error('El servicio local de ASISTIA se cerró al iniciar. Revisa la instalación o los registros.');
+    if (child.spawnError) throw new Error('Windows no pudo ejecutar el motor local: ' + child.spawnError.message);
+    if (child.exitCode !== null) throw new Error('El servicio local de ASISTIA se cerró al iniciar (código ' + child.exitCode + '). Consulta el registro: ' + logPath);
     try {
       const response = await fetch(API_URL + '/api/health', { signal: AbortSignal.timeout(1000) });
       if (response.ok) {
@@ -120,9 +128,11 @@ async function startBackend() {
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe']
     });
-    backendProcess.stdout.on('data', chunk => console.log('[ASISTIA API]', String(chunk).trim()));
-    backendProcess.stderr.on('data', chunk => console.error('[ASISTIA API]', String(chunk).trim()));
-    backendProcess.on('error', error => console.error('[ASISTIA API] No se pudo iniciar:', error));
+    backendProcess.stdout.on('data', chunk => logDiagnostic('INFO', '[ASISTIA API] ' + String(chunk).trim()));
+    backendProcess.stderr.on('data', chunk => logDiagnostic('ERROR', '[ASISTIA API] ' + String(chunk).trim()));
+    backendProcess.on('error', error => { backendProcess.spawnError = error; logDiagnostic('ERROR', '[ASISTIA API] No se pudo iniciar: ' + (error.stack || error.message)); });
+    backendProcess.on('exit', (code, signal) => logDiagnostic(code === 0 ? 'INFO' : 'ERROR', `[ASISTIA API] Proceso terminado. código=${code}, señal=${signal || 'ninguna'}`));
+    logDiagnostic('INFO', `Inicio del backend. empaquetado=${app.isPackaged}; cwd=${paths.cwd}; ejecutable=${paths.executable}; existeCwd=${fs.existsSync(paths.cwd)}; existeNode=${fs.existsSync(paths.executable)}; puerto=${PORT}`);
     await waitForHealth(backendProcess);
     if (bootstrap) {
       try { fs.unlinkSync(bootstrapPath); }
@@ -177,13 +187,14 @@ ipcMain.handle('asistia:setup', async (_event, input) => {
     await openProduct();
     return { ok: true };
   } catch (error) {
+    logDiagnostic('ERROR', 'Falló la configuración inicial: ' + (error.stack || error.message));
     // Si el arranque no alcanzó a confirmar la API, conserva la credencial temporal
     // para reintentar y retira solo la configuración incompleta.
     if (fs.existsSync(bootstrapPath)) {
       try { fs.unlinkSync(configPath); } catch {}
     }
     dialog.showErrorBox('No se pudo iniciar ASISTIA', error.message || 'Error desconocido.');
-    throw new Error('No se pudo iniciar ASISTIA. Revisa la configuración y vuelve a abrir la aplicación.');
+    throw new Error((error.message || 'No se pudo iniciar ASISTIA.') + '\\n\\nRegistro de diagnóstico: ' + logPath);
   }
 });
 
@@ -217,7 +228,8 @@ if (!gotLock) {
       await startBackend();
       await openProduct();
     } catch (error) {
-      dialog.showErrorBox('ASISTIA no pudo iniciar', error.message || 'Error desconocido.');
+      logDiagnostic('ERROR', 'Error durante el inicio de la aplicación: ' + (error.stack || error.message));
+      dialog.showErrorBox('ASISTIA no pudo iniciar', (error.message || 'Error desconocido.') + '\\n\\nRegistro: ' + logPath);
       app.quit();
     }
   });
