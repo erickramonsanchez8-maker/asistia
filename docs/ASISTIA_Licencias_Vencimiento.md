@@ -1,11 +1,12 @@
 # ASISTIA — política de vencimiento de licencias
 
 ## Reglas comerciales acordadas
-- La vigencia es personalizada por licencia; la fecha de vencimiento la define el administrador.
+- El administrador define la fecha de inicio y la fecha de vencimiento de cada licencia; también puede renovarla hasta una fecha exacta.
 - El cliente recibe un aviso al iniciar sesión en la API cuando faltan 10 días o menos.
 - Desde el vencimiento se bloquean las escrituras operativas, incluidos los nuevos marcajes de asistencia y las altas de empleados.
 - Se conserva el acceso autenticado a consulta y exportación del historial.
-- Renovaciones y suspensiones se administran manualmente; no se integran pagos.
+- Emisión, renovaciones con fecha exacta, suspensión/reactivación y revocación se administran desde un panel privado; no se integran pagos.
+- Las licencias con inicio futuro aparecen como programadas y el servicio remoto rechaza la activación antes de la fecha de inicio.
 - La gracia de conexión no extiende la vigencia comercial ni autoriza nuevas escrituras.
 
 ## Cambios de esta rama
@@ -18,7 +19,7 @@
 ## Límites y pasos restantes antes de vender
 1. Confirmar que el empaquetado de producción establece `ASISTIA_LICENSE_ENFORCEMENT=true` y distribuye la clave pública correcta.
 2. Integrar una licencia obligatoria en el asistente de primera instalación/alta de empresa. El bootstrap actual crea primero la empresa y su administrador; no debe describirse aún como un flujo de alta protegido por licencia.
-3. Verificar el servicio remoto de emisión y administración en un entorno HTTPS real; el panel central de vendedor y su despliegue no se consideran listos solo por existir endpoints.
+3. Desplegar el servicio remoto y su panel administrativo bajo HTTPS, con secretos protegidos, controles de red y respaldos; el panel actual es una primera versión y requiere revisión de seguridad.
 4. Probar instalación limpia, activación, renovaciones, suspensión, desconexión, vencimiento, consulta/exportación y restauración de respaldo.
 5. Resolver la separación entre el HTML heredado y la API antes de prometer que todas las funciones de la interfaz quedan bloqueadas o que todo el historial está sincronizado.
 6. Añadir pruebas de integración para confirmar que cada ruta de escritura devuelve HTTP 402 al vencer la licencia y que consultas/exportaciones continúan funcionando.
