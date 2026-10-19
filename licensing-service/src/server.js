@@ -5,6 +5,7 @@ import Database from 'better-sqlite3';
 import { randomBytes, randomUUID, createHash, createPrivateKey, sign as signBytes, timingSafeEqual } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
 const app = express();
@@ -16,6 +17,7 @@ app.use('/v1', rateLimit({ windowMs: 15 * 60 * 1000, limit: 120, standardHeaders
 const PORT = Number(process.env.PORT || 3400);
 const HOST = process.env.HOST || '127.0.0.1';
 const DB_PATH = resolve(process.env.DATABASE_PATH || './data/licensing.sqlite');
+const PUBLIC_DIR = fileURLToPath(new URL('../public/', import.meta.url));
 const ADMIN_TOKEN = process.env.LICENSING_ADMIN_TOKEN || '';
 const PRIVATE_KEY_TEXT = (process.env.LICENSING_PRIVATE_KEY || '').replace(/\\n/g, '\n').trim();
 const GRACE_DAYS = 7;
@@ -41,6 +43,7 @@ db.exec(`
 CREATE TABLE IF NOT EXISTS licenses (
   id TEXT PRIMARY KEY, company_id TEXT NOT NULL, plan_code TEXT NOT NULL,
   status TEXT NOT NULL CHECK(status IN ('active','revoked')),
+  suspended INTEGER NOT NULL DEFAULT 0,
   activation_code_hash TEXT UNIQUE, max_employees INTEGER NOT NULL,
   max_devices INTEGER NOT NULL, issued_at TEXT NOT NULL, expires_at TEXT NOT NULL,
   version INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
@@ -57,6 +60,9 @@ CREATE TABLE IF NOT EXISTS license_audit (
 );
 CREATE INDEX IF NOT EXISTS idx_activations_license_status ON activations(license_id,status);
 `);
+try { db.exec('ALTER TABLE licenses ADD COLUMN suspended INTEGER NOT NULL DEFAULT 0'); }
+catch (error) { if (!String(error.message).includes('duplicate column name')) throw error; }
+app.use('/admin', express.static(PUBLIC_DIR));
 
 function audit(licenseId, eventType, details = {}) {
   db.prepare('INSERT INTO license_audit(id,license_id,event_type,details_json,created_at) VALUES(?,?,?,?,?)')
@@ -75,7 +81,7 @@ function signLicense(row) {
   return bytes.toString('base64url') + '.' + signBytes('RSA-SHA256', bytes, privateKey).toString('base64url');
 }
 function publicLicense(row) {
-  return { licenseId: row.id, companyId: row.company_id, planCode: row.plan_code, status: row.status,
+  return { licenseId: row.id, companyId: row.company_id, planCode: row.plan_code, status: row.status === 'revoked' ? 'revoked' : (row.suspended ? 'suspended' : 'active'),
     maxEmployees: row.max_employees, maxDevices: row.max_devices, issuedAt: row.issued_at, expiresAt: row.expires_at, version: row.version };
 }
 function adminOnly(req, res, next) {
@@ -110,6 +116,21 @@ const deviceSchema = z.object({
 
 app.get('/v1/health', (req, res) => res.json({ status: 'ok', service: 'ASISTIA Licensing', time: iso(now()) }));
 
+app.get('/v1/admin/licenses', adminOnly, (req, res, next) => {
+  try {
+    const rawLimit = req.query.limit === undefined ? 50 : Number(req.query.limit);
+    const rawOffset = req.query.offset === undefined ? 0 : Number(req.query.offset);
+    if (!Number.isInteger(rawLimit) || rawLimit < 1 || rawLimit > 100 || !Number.isInteger(rawOffset) || rawOffset < 0 || rawOffset > 1000000) {
+      throw appError(400, 'Paginación inválida.');
+    }
+    const total = db.prepare('SELECT COUNT(*) AS total FROM licenses').get().total;
+    const licenses = db.prepare(`SELECT l.*, (SELECT COUNT(*) FROM activations a WHERE a.license_id=l.id AND a.status='active') AS active_devices
+      FROM licenses l ORDER BY l.created_at DESC LIMIT ? OFFSET ?`).all(rawLimit, rawOffset)
+      .map(row => ({ ...publicLicense(row), activeDevices: row.active_devices }));
+    res.json({ licenses, pagination: { limit: rawLimit, offset: rawOffset, total, hasMore: rawOffset + licenses.length < total } });
+  } catch (error) { next(error); }
+});
+
 app.post('/v1/admin/licenses', adminOnly, (req, res, next) => {
   try {
     const input = issueSchema.parse(req.body);
@@ -127,7 +148,7 @@ app.post('/v1/activate', (req, res, next) => {
   try {
     const input = activationSchema.parse(req.body);
     const license = db.prepare('SELECT * FROM licenses WHERE activation_code_hash=?').get(hash(input.activationCode));
-    if (!license || license.status !== 'active') throw appError(403, 'El código de activación es inválido o la licencia está revocada.');
+    if (!license || license.status !== 'active' || license.suspended) throw appError(403, 'El código de activación es inválido, está suspendido o la licencia está revocada.');
     if (license.company_id !== input.companyId) throw appError(403, 'La licencia no corresponde a esta empresa.');
     if (Date.parse(license.expires_at) < now().getTime()) throw appError(402, 'La suscripción venció; solicita una renovación al proveedor.');
     let activation = db.prepare('SELECT * FROM activations WHERE license_id=? AND device_id=?').get(license.id, input.deviceId);
@@ -160,7 +181,7 @@ app.post('/v1/licenses/refresh', (req, res, next) => {
     const input = deviceSchema.parse(req.body);
     activationFor(input.licenseId, input.deviceId, input.activationSecret);
     const license = db.prepare('SELECT * FROM licenses WHERE id=?').get(input.licenseId);
-    if (!license || license.status !== 'active') throw appError(403, 'La licencia está revocada o no existe.');
+    if (!license || license.status !== 'active' || license.suspended) throw appError(403, 'La licencia está suspendida, revocada o no existe.');
     if (Date.parse(license.expires_at) < now().getTime()) throw appError(402, 'La suscripción venció; el administrador debe renovarla.');
     const timestamp = iso(now());
     db.prepare('UPDATE activations SET last_seen_at=? WHERE license_id=? AND device_id=?').run(timestamp, license.id, input.deviceId);
@@ -183,7 +204,7 @@ app.post('/v1/licenses/deactivate', (req, res, next) => {
 
 app.post('/v1/admin/licenses/:id/activation-code', adminOnly, (req, res, next) => {
   try {
-    const license = db.prepare("SELECT * FROM licenses WHERE id=? AND status='active'").get(req.params.id);
+    const license = db.prepare("SELECT * FROM licenses WHERE id=? AND status='active' AND suspended=0").get(req.params.id);
     if (!license) throw appError(404, 'Licencia activa no encontrada.');
     const activeCount = db.prepare("SELECT COUNT(*) AS total FROM activations WHERE license_id=? AND status='active'").get(license.id).total;
     if (activeCount >= license.max_devices) throw appError(409, 'No hay cupos de dispositivo disponibles; desactiva uno antes de emitir otro código.');
@@ -207,6 +228,26 @@ app.post('/v1/admin/licenses/:id/renew', adminOnly, (req, res, next) => {
     audit(license.id, 'license.renewed', { durationDays: input.durationDays, expiresAt });
     const updated = db.prepare('SELECT * FROM licenses WHERE id=?').get(license.id);
     res.json({ license: publicLicense(updated) });
+  } catch (error) { next(error); }
+});
+
+app.post('/v1/admin/licenses/:id/suspend', adminOnly, (req, res, next) => {
+  try {
+    const license = db.prepare("SELECT * FROM licenses WHERE id=? AND status='active'").get(req.params.id);
+    if (!license) throw appError(404, 'Licencia activa no encontrada.');
+    db.prepare('UPDATE licenses SET suspended=1,updated_at=? WHERE id=?').run(iso(now()), license.id);
+    audit(license.id, 'license.suspended');
+    res.json({ ok: true, licenseId: license.id, status: 'suspended' });
+  } catch (error) { next(error); }
+});
+
+app.post('/v1/admin/licenses/:id/resume', adminOnly, (req, res, next) => {
+  try {
+    const license = db.prepare("SELECT * FROM licenses WHERE id=? AND status='active' AND suspended=1").get(req.params.id);
+    if (!license) throw appError(404, 'No se encontró una licencia suspendida que pueda reactivarse.');
+    db.prepare('UPDATE licenses SET suspended=0,updated_at=? WHERE id=?').run(iso(now()), license.id);
+    audit(license.id, 'license.resumed');
+    res.json({ ok: true, licenseId: license.id, status: 'active' });
   } catch (error) { next(error); }
 });
 
