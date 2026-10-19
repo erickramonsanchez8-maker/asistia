@@ -26,7 +26,7 @@ button{width:100%;border:0;border-radius:12px;background:linear-gradient(180deg,
 <section class="intro">
   <div class="logo" aria-hidden="true">A</div>
   <h1>Bienvenido a ASISTIA</h1>
-  <p>Configura tu espacio de trabajo para comenzar a administrar la asistencia de tu negocio.</p>
+  <p>Configura la cuenta administradora de la API local. La interfaz heredada conserva su almacenamiento y configuración por separado.</p>
   <div class="step"><span class="number">1</span><span>Registra el negocio y crea la cuenta administradora.</span></div>
   <div class="step"><span class="number">2</span><span>ASISTIA preparará su base de datos local en este equipo.</span></div>
   <div class="step"><span class="number">3</span><span>Entra al sistema y comienza a configurarlo.</span></div>
@@ -34,7 +34,7 @@ button{width:100%;border:0;border-radius:12px;background:linear-gradient(180deg,
 <section class="form">
   <div class="eyebrow">Configuración inicial · Solo una vez</div>
   <h2>Datos de tu negocio</h2>
-  <p class="sub">La información de asistencia se guardará en este equipo.</p>
+  <p class="sub">La base de datos de la API se guardará en este equipo. Los datos heredados no se migran automáticamente.</p>
   <form id="setupForm">
     <div class="field">
       <label for="companyName">Nombre del negocio</label>
@@ -56,7 +56,7 @@ button{width:100%;border:0;border-radius:12px;background:linear-gradient(180deg,
     <button id="submitButton" type="submit">Configurar ASISTIA</button>
     <p class="message" id="message" role="alert" aria-live="polite"></p>
   </form>
-  <div class="privacy">ASISTIA no envía tus registros de asistencia a un servidor externo desde esta configuración. Protege tu computadora y crea respaldos periódicos.</div>
+  <div class="privacy">Esta configuración no envía registros a un servidor externo. La cuenta creada aquí es para el panel Conexión con API; los usuarios del sistema heredado son independientes. Protege tu computadora y crea respaldos periódicos.</div>
 </section>
 </main>
 <script>
