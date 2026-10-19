@@ -353,6 +353,7 @@ app.get('/api/license/status', authenticate, roles('admin'), (req,res) => {
       licenseId:state.license.licenseId,
       companyId:state.license.companyId,
       planCode:state.license.planCode,
+      startsAt:state.license.startsAt,
       expiresAt:state.license.expiresAt,
       offlineGraceUntil:state.license.offlineGraceUntil,
       maxEmployees:state.license.maxEmployees,
@@ -398,6 +399,7 @@ app.post('/api/license/activate', authenticate, roles('admin'), async (req,res,n
     try { license=verifyLicenseDocument(signedDocument,publicKey,new Date()); }
     catch(e) { throw appError(422,e.message || 'Documento de licencia inválido.'); }
     if (license.companyId !== req.user.companyId) throw appError(403,'La licencia no corresponde a esta empresa.');
+    if (license.status === 'scheduled') throw appError(402,'La vigencia de esta licencia todavía no inicia.');
     if (license.status !== 'active') throw appError(402,'La licencia está vencida. La activación requiere una licencia vigente.');
     const existing=db.prepare('SELECT id FROM license_state WHERE company_id=?').get(req.user.companyId);
     const timestamp=now();
