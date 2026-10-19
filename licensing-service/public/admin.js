@@ -126,7 +126,7 @@
     try {
       if (action === 'renew') {
         const date = prompt('Nueva fecha de vencimiento (AAAA-MM-DD). Debe ser posterior al vencimiento actual.', '');
-        if (!date || !/^\\d{4}-\\d{2}-\\d{2}$/.test(date)) return;
+        if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
         if (!confirm('¿Extender la licencia hasta el final del día ' + date + ' UTC?')) return;
         await api('/v1/admin/licenses/' + encodeURIComponent(id) + '/renew', { method: 'POST', body: { expiresAt: new Date(date + 'T23:59:59.999Z').toISOString() } });
       } else if (action === 'code') {
