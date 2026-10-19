@@ -17,7 +17,7 @@ La clave pública correspondiente debe configurarse en la API local de ASISTIA c
 
 ## Flujo de operación
 
-1. Un operador autenticado crea una licencia mediante `POST /v1/admin/licenses`. El código de activación se devuelve una sola vez; guárdalo de forma segura y entrégalo al cliente por un canal privado.
+1. Un operador autenticado crea una licencia mediante `POST /v1/admin/licenses`. Puede definir `startsAt` y `expiresAt` exactos en ISO 8601, o usar `durationDays` para compatibilidad. El código de activación se devuelve una sola vez; guárdalo de forma segura y entrégalo al cliente por un canal privado.
 2. El cliente genera un `deviceId` aleatorio persistente por instalación y llama `POST /v1/activate` con código, `companyId` y `deviceId`. El código queda invalidado al activar correctamente.
 3. El cliente guarda el `activationSecret` en almacenamiento local protegido y el documento firmado en la API local. El secreto permite renovar o desactivar esa activación; no debe mostrarse ni registrarse en logs.
 4. Antes de vencer la licencia, el cliente llama `POST /v1/licenses/refresh`. Una licencia revocada no recibe nuevos documentos firmados. La licencia firmada conserva la gracia offline de 7 días tras su fecha de vencimiento.
@@ -25,7 +25,7 @@ La clave pública correspondiente debe configurarse en la API local de ASISTIA c
 
 ## Panel administrativo
 
-Tras configurar y desplegar el servicio bajo HTTPS, abre `/admin/`. Introduce el token administrativo del servidor; el navegador lo mantiene únicamente en memoria y no lo escribe en `localStorage` ni `sessionStorage`. El panel permite emitir licencias, consultar el registro, generar códigos nuevos, renovar, suspender, reactivar y revocar. El código de activación solo se devuelve al emitirlo y debe copiarse/entregarse por un canal privado.
+Tras configurar y desplegar el servicio bajo HTTPS, abre `/admin/`. Introduce el token administrativo del servidor; el navegador lo mantiene únicamente en memoria y no lo escribe en `localStorage` ni `sessionStorage`. El panel permite emitir licencias, consultar el registro, generar códigos nuevos, renovar, suspender, reactivar y revocar. El código de activación solo se devuelve al emitirlo y debe copiarse/entregarse por un canal privado. Las fechas se capturan en UTC; la fecha final se puede introducir como fecha de calendario y se interpreta hasta las 23:59:59.999 UTC.
 
 El panel requiere conocer el `companyId` exacto de la empresa en la API local de ASISTIA. Confírmalo desde el entorno de administración de esa instalación antes de emitir el código; no uses el nombre comercial como sustituto.
 
@@ -38,7 +38,7 @@ El panel requiere conocer el `companyId` exacto de la empresa en la API local de
 - `POST /v1/licenses/refresh`: renovar documento firmado de una activación.
 - `POST /v1/licenses/deactivate`: desactivar dispositivo.
 - `POST /v1/admin/licenses/:id/activation-code`: emitir un nuevo código de un solo uso para una licencia activa (Bearer administrativo); requiere cupo de dispositivo disponible.
-- `POST /v1/admin/licenses/:id/renew`: extender vigencia (Bearer administrativo).
+- `POST /v1/admin/licenses/:id/renew`: extender vigencia mediante duración o fecha exacta de vencimiento (Bearer administrativo).
 - `POST /v1/admin/licenses/:id/suspend`: suspender licencia (Bearer administrativo).
 - `POST /v1/admin/licenses/:id/resume`: reactivar una licencia suspendida (Bearer administrativo).
 - `POST /v1/admin/licenses/:id/revoke`: revocación permanente (Bearer administrativo).
