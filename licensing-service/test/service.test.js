@@ -59,6 +59,19 @@ after(async () => {
   if (tempDir) await rm(tempDir, { recursive: true, force: true });
 });
 
+test('sirve el panel administrativo y protege el listado de licencias', async () => {
+  const page = await fetch(baseUrl + '/admin/');
+  assert.equal(page.status, 200);
+  assert.match(page.headers.get('content-type'), /text\/html/i);
+  const html = await page.text();
+  assert.match(html, /Administración de licencias/);
+  const script = await fetch(baseUrl + '/admin/admin.js');
+  assert.equal(script.status, 200);
+  assert.match(script.headers.get('content-type'), /javascript/i);
+  const denied = await request('/v1/admin/licenses');
+  assert.equal(denied.status, 401);
+});
+
 test('no permite emitir licencias sin token administrativo', async () => {
   const result = await request('/v1/admin/licenses', { method: 'POST', body: {
     companyId: 'company-test', planCode: 'basic', maxEmployees: 10, maxDevices: 1, durationDays: 30
