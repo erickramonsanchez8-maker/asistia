@@ -8,6 +8,7 @@ import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 import { randomUUID, randomBytes, createHash, createCipheriv, createDecipheriv } from 'node:crypto';
 import { verifyLicenseDocument } from './license-verifier.js';
+import { getLicensePresentation } from './license-policy.js';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import Database from 'better-sqlite3';
@@ -341,11 +342,12 @@ function assertLicenseAllowsEmployee(companyId) {
 }
 app.get('/api/license/status', authenticate, roles('admin'), (req,res) => {
   const state = readCompanyLicense(req.user.companyId);
+  const presentation = getLicensePresentation(state);
   res.json({
     status:state.status,
-    daysRemaining:state.license ? Math.ceil((Date.parse(state.license.expiresAt) - Date.now()) / 86400000) : null,
-    showExpiryWarning:state.status === 'active' && state.license !== null && (Date.parse(state.license.expiresAt) - Date.now()) >= 0 && (Date.parse(state.license.expiresAt) - Date.now()) <= 10 * 86400000,
-    historyReadOnly:state.status !== 'active',
+    daysRemaining:presentation.daysRemaining,
+    showExpiryWarning:presentation.showExpiryWarning,
+    historyReadOnly:presentation.historyReadOnly,
     lastValidatedAt:state.lastValidatedAt,
     license:state.license ? {
       licenseId:state.license.licenseId,
