@@ -85,7 +85,8 @@ function signLicense(row) {
   return bytes.toString('base64url') + '.' + signBytes('RSA-SHA256', bytes, privateKey).toString('base64url');
 }
 function publicLicense(row) {
-  return { licenseId: row.id, companyId: row.company_id, planCode: row.plan_code, status: row.status === 'revoked' ? 'revoked' : (row.suspended ? 'suspended' : 'active'),
+  const status = row.status === 'revoked' ? 'revoked' : (row.suspended ? 'suspended' : (Date.parse(row.starts_at || row.issued_at) > now().getTime() ? 'scheduled' : 'active'));
+  return { licenseId: row.id, companyId: row.company_id, planCode: row.plan_code, status,
     maxEmployees: row.max_employees, maxDevices: row.max_devices, startsAt: row.starts_at || row.issued_at, issuedAt: row.issued_at, expiresAt: row.expires_at, version: row.version };
 }
 function adminOnly(req, res, next) {
