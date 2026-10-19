@@ -238,3 +238,21 @@ test('el panel lista licencias y permite suspender y reactivar con auditoría de
   }});
   assert.equal(refreshed.status, 200);
 });
+
+test('permite programar inicio y vencimiento personalizados y no activar antes del inicio', async () => {
+  const start = new Date(Date.now() + 2 * 86400000);
+  const expiry = new Date(Date.now() + 32 * 86400000);
+  const issued = await request('/v1/admin/licenses', { method: 'POST', admin: true, body: {
+    companyId: 'company-scheduled', planCode: 'scheduled', maxEmployees: 12, maxDevices: 1,
+    startsAt: start.toISOString(), expiresAt: expiry.toISOString()
+  }});
+  assert.equal(issued.status, 201, JSON.stringify(issued.data));
+  assert.equal(issued.data.license.status, 'scheduled');
+  assert.equal(issued.data.license.startsAt, start.toISOString());
+
+  const earlyActivation = await request('/v1/activate', { method: 'POST', body: {
+    activationCode: issued.data.activationCode, companyId: 'company-scheduled', deviceId: 'device-scheduled-0001'
+  }});
+  assert.equal(earlyActivation.status, 402);
+  assert.match(earlyActivation.data.error, /todavía no inicia/i);
+});
