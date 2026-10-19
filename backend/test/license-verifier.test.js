@@ -70,6 +70,12 @@ test('rechaza licencia con campos o límites inválidos aunque esté firmada', (
   assert.throws(() => verifyLicenseDocument(makeLicense({ status: 'revoked' }), publicKey, new Date('2026-10-18T00:00:00Z')), /no está activa/);
 });
 
+test('reconoce una licencia programada antes de su fecha de inicio', () => {
+  const result = verifyLicenseDocument(makeLicense({ startsAt: '2026-10-25T00:00:00.000Z' }), publicKey, new Date('2026-10-18T00:00:00Z'));
+  assert.equal(result.status, 'scheduled');
+  assert.equal(result.startsAt, '2026-10-25T00:00:00.000Z');
+});
+
 test('rechaza licencia emitida en el futuro y fechas incoherentes', () => {
   assert.throws(() => verifyLicenseDocument(makeLicense({ issuedAt: '2027-01-01T00:00:00Z' }), publicKey, new Date('2026-10-18T00:00:00Z')), /futuro/);
   assert.throws(() => verifyLicenseDocument(makeLicense({ offlineGraceUntil: '2026-10-15T00:00:00Z' }), publicKey, new Date('2026-10-18T00:00:00Z')), /coherente/);
