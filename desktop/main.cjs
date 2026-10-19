@@ -44,7 +44,7 @@ function createWindow() {
     minWidth: 980,
     minHeight: 680,
     backgroundColor: '#0b1f3a',
-    icon: path.join(app.getAppPath(), 'desktop', 'assets', 'asistia-logo.png'),
+    icon: app.isPackaged ? path.join(process.resourcesPath, 'asistia-logo.png') : path.join(app.getAppPath(), 'desktop', 'assets', 'asistia-logo.png'),
     show: false,
     autoHideMenuBar: true,
     webPreferences: {
