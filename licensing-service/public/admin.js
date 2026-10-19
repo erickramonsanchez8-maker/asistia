@@ -52,13 +52,13 @@
         const plan = document.createElement('small'); plan.textContent = license.planCode + ' · ' + license.licenseId;
         identity.append(company, plan); row.append(identity);
         const statusCell = document.createElement('td');
-        const badge = document.createElement('span'); badge.className = 'state' + (license.status === 'suspended' ? ' suspended' : license.status === 'revoked' ? ' revoked' : '');
-        badge.textContent = license.status === 'active' ? 'ACTIVA' : license.status === 'suspended' ? 'SUSPENDIDA' : 'REVOCADA';
+        const badge = document.createElement('span'); badge.className = 'state' + (license.status === 'suspended' ? ' suspended' : license.status === 'revoked' ? ' revoked' : license.status === 'scheduled' ? ' suspended' : '');
+        badge.textContent = license.status === 'active' ? 'ACTIVA' : license.status === 'scheduled' ? 'PROGRAMADA' : license.status === 'suspended' ? 'SUSPENDIDA' : 'REVOCADA';
         statusCell.append(badge); row.append(statusCell);
         row.append(makeCell(formatDate(license.startsAt) + ' — ' + formatDate(license.expiresAt)));
         row.append(makeCell(String(license.activeDevices) + ' / ' + 'máx. ' + license.maxDevices));
         const actions = document.createElement('td'), group = document.createElement('div'); group.className = 'actions';
-        if (license.status === 'active') {
+        if (license.status === 'active' || license.status === 'scheduled') {
           group.append(actionButton('Renovar', 'renew', license.licenseId));
           group.append(actionButton('Nuevo código', 'code', license.licenseId));
           group.append(actionButton('Suspender', 'suspend', license.licenseId, 'secondary'));
