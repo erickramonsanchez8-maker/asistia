@@ -1,15 +1,17 @@
 # ASISTIA
 
-Sistema de control de asistencia. La versión actual conserva el HTML existente y añade una API de backend en `backend/` en evolución hacia la versión 0.3.
+Sistema de control de asistencia en evolución hacia una aplicación de escritorio para Windows.
 
-## Versiones
-- **Interfaz heredada:** `ASISTIA_Control_de_Asistencia.html`; mantiene sus funciones y almacenamiento local.
-- **API 0.3 (experimental):** Node.js + Express + SQLite, autenticación JWT, roles, separación por empresa, expedientes de empleados con RFC validado, eventos de asistencia, solicitudes de corrección con ajustes aprobados trazables, cambio de contraseña con revocación de sesiones, desactivación de usuarios, constancias, bitácora y reporte CSV.
+## Estado actual
 
-## Estado de la versión 0.3
-La API se encuentra en etapa inicial. La interfaz HTML todavía no está conectada a ella; son dos vías separadas hasta completar integración y pruebas. El módulo Cumplimiento LFT permite generar constancias individuales y descargar una copia HTML, pero sus registros permanecen en localStorage. No migres datos reales ni retires el flujo anterior sin probar respaldo, restauración y reconciliación.
+- **Interfaz heredada:** `ASISTIA_Control_de_Asistencia.html`, con funciones que conservan almacenamiento local.
+- **API local 0.3:** Node.js + Express + SQLite, autenticación JWT, roles, separación por empresa, eventos de asistencia, ajustes trazables, bitácora y reportes CSV.
+- **Conexión de escritorio beta:** la interfaz incluye un panel para probar la API, iniciar sesión, consultar empleados/licencia y registrar eventos desde el backend.
+- **Instalador Windows en preparación:** el workflow [ASISTIA Windows installer](.github/workflows/windows-installer.yml) construye un instalador x64 y publica un artefacto en GitHub Actions cuando finaliza correctamente.
 
-Consulta [arquitectura y límites de ASISTIA 0.3](docs/ASISTIA_0.2_ARQUITECTURA.md), [arquitectura objetivo de ASISTIA Desktop y licencias](docs/ASISTIA_DESKTOP_ARQUITECTURA.md), [modelo de datos](database/README.md) y la [plantilla de acuerdo de uso del registro electrónico de jornada](docs/ASISTIA_Acuerdo_Uso_Registro_Electronico.md). La arquitectura Desktop es un diseño de implementación; no implica que la activación o validación de licencias ya esté habilitada.
+La interfaz heredada y la API **todavía no sincronizan sus historiales automáticamente**. El panel de API requiere que el backend local esté funcionando y aún no incluye cola offline ni reconciliación de eventos. El código de licencias no significa que el servicio remoto esté desplegado, que existan cobros automáticos o que el producto esté certificado para uso laboral.
+
+Para conocer el alcance, la configuración y los límites del instalador, consulta [ASISTIA para Windows — instalador beta](docs/ASISTIA_DESCARGA_WINDOWS.md) y [arquitectura de escritorio y licencias](docs/ASISTIA_DESKTOP_ARQUITECTURA.md). La arquitectura de escritorio describe componentes y trabajo pendiente; no constituye una promesa de disponibilidad comercial.
 
 ## Ejecutar la API
 Requisitos: Node.js 20+.
