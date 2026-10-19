@@ -322,21 +322,30 @@ function readCompanyLicense(companyId) {
     return { status:'invalid', license:null, lastValidatedAt:saved.last_validated_at };
   }
 }
-function assertLicenseAllowsEmployee(companyId) {
-  if (process.env.ASISTIA_LICENSE_ENFORCEMENT !== 'true') return;
+function assertLicenseAllowsOperation(companyId, operationLabel = 'realizar esta operación') {
+  if (process.env.ASISTIA_LICENSE_ENFORCEMENT !== 'true') return null;
   const state = readCompanyLicense(companyId);
-  if (!state.license || !['active','offline_grace'].includes(state.status)) {
-    throw appError(402, 'Se requiere una licencia ASISTIA válida para registrar empleados. Conservas el acceso al historial y a sus exportaciones.');
+  // La gracia sin conexión no extiende la vigencia comercial ni autoriza escrituras.
+  if (!state.license || state.status !== 'active') {
+    throw appError(402, `Se requiere una licencia ASISTIA vigente para ${operationLabel}. Puedes consultar y exportar el historial existente.`);
   }
+  return state.license;
+}
+function assertLicenseAllowsEmployee(companyId) {
+  const license = assertLicenseAllowsOperation(companyId, 'registrar empleados');
+  if (!license) return;
   const activeEmployees = db.prepare('SELECT COUNT(*) AS total FROM employees WHERE company_id=? AND active=1').get(companyId).total;
-  if (activeEmployees >= state.license.maxEmployees) {
-    throw appError(409, `El plan actual permite hasta ${state.license.maxEmployees} empleados activos. Amplía tu plan para registrar más.`);
+  if (activeEmployees >= license.maxEmployees) {
+    throw appError(409, `El plan actual permite hasta ${license.maxEmployees} empleados activos. Amplía tu plan para registrar más.`);
   }
 }
 app.get('/api/license/status', authenticate, roles('admin'), (req,res) => {
   const state = readCompanyLicense(req.user.companyId);
   res.json({
     status:state.status,
+    daysRemaining:state.license ? Math.ceil((Date.parse(state.license.expiresAt) - Date.now()) / 86400000) : null,
+    showExpiryWarning:state.status === 'active' && state.license !== null && (Date.parse(state.license.expiresAt) - Date.now()) >= 0 && (Date.parse(state.license.expiresAt) - Date.now()) <= 10 * 86400000,
+    historyReadOnly:state.status !== 'active',
     lastValidatedAt:state.lastValidatedAt,
     license:state.license ? {
       licenseId:state.license.licenseId,
@@ -387,7 +396,7 @@ app.post('/api/license/activate', authenticate, roles('admin'), async (req,res,n
     try { license=verifyLicenseDocument(signedDocument,publicKey,new Date()); }
     catch(e) { throw appError(422,e.message || 'Documento de licencia inválido.'); }
     if (license.companyId !== req.user.companyId) throw appError(403,'La licencia no corresponde a esta empresa.');
-    if (!['active','offline_grace'].includes(license.status)) throw appError(402,'La licencia está vencida o fuera del periodo de gracia.');
+    if (license.status !== 'active') throw appError(402,'La licencia está vencida. La activación requiere una licencia vigente.');
     const existing=db.prepare('SELECT id FROM license_state WHERE company_id=?').get(req.user.companyId);
     const timestamp=now();
     db.prepare(`INSERT INTO license_state(id,company_id,license_id,signed_document,last_validated_at,updated_at,device_id,activation_secret_encrypted,remote_status)
@@ -579,6 +588,7 @@ app.patch('/api/employees/:id/deactivate', authenticate, roles('admin'), (req,re
 app.post('/api/attendance/events', authenticate, (req,res,next) => {
   try {
     const input = eventSchema.parse(req.body);
+    assertLicenseAllowsOperation(req.user.companyId, 'registrar nuevas asistencias');
     const employee = db.prepare('SELECT id,active FROM employees WHERE id=? AND company_id=?').get(input.employeeId,req.user.companyId);
     if (!employee || !employee.active) throw appError(404,'Empleado no encontrado o inactivo.');
     if (req.user.role === 'worker' && req.user.employeeId !== input.employeeId) throw appError(403,'Solo puedes registrar tu propia asistencia.');
