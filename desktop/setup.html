@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'">
+<title>Configurar ASISTIA</title>
+<style>
+:root{color-scheme:light;--navy:#0b1f3a;--teal:#1aa6b7;--ink:#142033;--muted:#5b6b80;--line:#d7e0ec;--bg:#f4f7fb;--red:#b42318}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;font:16px/1.5 "Segoe UI",system-ui,sans-serif;background:linear-gradient(140deg,#071526,#0b1f3a 55%,#12324f);color:var(--ink);display:grid;place-items:center;padding:24px}
+.layout{width:min(940px,100%);display:grid;grid-template-columns:.9fr 1.1fr;background:#fff;border-radius:24px;overflow:hidden;box-shadow:0 28px 90px #0005;animation:rise .4s ease}
+.intro{padding:42px 36px;background:linear-gradient(155deg,#0b1f3a,#12324f);color:#fff;position:relative;overflow:hidden}
+.intro:after{content:"";position:absolute;width:280px;height:280px;border-radius:50%;right:-130px;bottom:-120px;border:40px solid #1aa6b72b}
+.logo{width:min(270px,100%);height:78px;padding:8px 12px;border-radius:14px;background:#fff;display:flex;align-items:center;justify-content:flex-start;margin-bottom:8px;box-shadow:0 10px 28px #0002}.logo img{display:block;max-width:100%;max-height:62px;object-fit:contain;object-position:left center}
+h1{font-size:32px;line-height:1.15;letter-spacing:-1px;margin:24px 0 12px;color:#fff}.intro p{color:#cad8e8}.step{display:flex;gap:12px;align-items:flex-start;margin-top:28px;color:#e2edf8;font-size:14px}.number{flex:none;width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:#ffffff1b;color:#7de4ed;font-weight:750}
+.form{padding:42px 38px}.eyebrow{color:#148a98;font-weight:800;font-size:12px;letter-spacing:1.2px;text-transform:uppercase}h2{margin:8px 0 4px;font-size:25px;letter-spacing:-.6px;color:var(--navy)}.sub{margin:0 0 24px;color:var(--muted);font-size:14px}
+.field{display:grid;gap:6px;margin-bottom:16px}.field label{font-weight:700;font-size:14px;color:var(--navy)}input{width:100%;border:1px solid var(--line);border-radius:11px;padding:12px 13px;font:inherit;outline:none;background:#fff}input:focus{border-color:var(--teal);box-shadow:0 0 0 4px #1aa6b71c}.hint{font-size:12px;color:var(--muted)}
+button{width:100%;border:0;border-radius:12px;background:linear-gradient(180deg,#1db4c6,#148a98);color:#fff;font-weight:800;font-size:15px;padding:14px;cursor:pointer;box-shadow:0 8px 18px #1aa6b72b;transition:transform .15s}button:hover{transform:translateY(-1px)}button:disabled{opacity:.55;cursor:wait;transform:none}
+.message{min-height:24px;color:var(--red);font-size:13px;margin:10px 0 0}.privacy{border-top:1px solid #edf2f7;margin-top:22px;padding-top:16px;color:var(--muted);font-size:12px}
+@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@media(max-width:760px){.layout{grid-template-columns:1fr}.intro{padding:28px}.intro h1{font-size:27px}.step{margin-top:14px}.form{padding:28px}}
+</style>
+</head>
+<body>
+<main class="layout">
+<section class="intro">
+  <div class="logo"><img src="./assets/asistia-logo.png" alt="ASISTIA"></div>
+  <h1>Bienvenido a ASISTIA</h1>
+  <p>Configura la cuenta administradora de la API local. La interfaz heredada conserva su almacenamiento y configuración por separado.</p>
+  <div class="step"><span class="number">1</span><span>Registra el negocio y crea la cuenta administradora.</span></div>
+  <div class="step"><span class="number">2</span><span>ASISTIA preparará su base de datos local en este equipo.</span></div>
+  <div class="step"><span class="number">3</span><span>Entra al sistema y comienza a configurarlo.</span></div>
+</section>
+<section class="form">
+  <div class="eyebrow">Configuración inicial · Solo una vez</div>
+  <h2>Datos de tu negocio</h2>
+  <p class="sub">La base de datos de la API se guardará en este equipo. Los datos heredados no se migran automáticamente.</p>
+  <form id="setupForm">
+    <div class="field">
+      <label for="companyName">Nombre del negocio</label>
+      <input id="companyName" name="companyName" autocomplete="organization" maxlength="120" required placeholder="Ej. Empresa del Centro">
+    </div>
+    <div class="field">
+      <label for="email">Correo del administrador</label>
+      <input id="email" name="email" type="email" autocomplete="username" maxlength="254" required placeholder="admin@empresa.com">
+    </div>
+    <div class="field">
+      <label for="password">Contraseña del administrador</label>
+      <input id="password" name="password" type="password" autocomplete="new-password" minlength="14" maxlength="200" required placeholder="Mínimo 14 caracteres">
+      <div class="hint">Usa una contraseña única. No hay una contraseña predeterminada.</div>
+    </div>
+    <div class="field">
+      <label for="confirmPassword">Confirmar contraseña</label>
+      <input id="confirmPassword" name="confirmPassword" type="password" autocomplete="new-password" minlength="14" maxlength="200" required>
+    </div>
+    <button id="submitButton" type="submit">Configurar ASISTIA</button>
+    <p class="message" id="message" role="alert" aria-live="polite"></p>
+  </form>
+  <div class="privacy">Esta configuración no envía registros a un servidor externo. La cuenta creada aquí es para el panel Conexión con API; los usuarios del sistema heredado son independientes. Protege tu computadora y crea respaldos periódicos.</div>
+</section>
+</main>
+<script>
+const form=document.getElementById('setupForm');
+const button=document.getElementById('submitButton');
+const message=document.getElementById('message');
+form.addEventListener('submit',async event=>{
+  event.preventDefault();
+  message.textContent='';
+  const companyName=document.getElementById('companyName').value.trim();
+  const email=document.getElementById('email').value.trim();
+  const password=document.getElementById('password').value;
+  const confirmPassword=document.getElementById('confirmPassword').value;
+  if(password.length<14){message.textContent='La contraseña debe tener al menos 14 caracteres.';return;}
+  if(password!==confirmPassword){message.textContent='Las contraseñas no coinciden.';return;}
+  button.disabled=true;button.textContent='Preparando tu espacio de trabajo…';
+  try{
+    await window.asistiaSetup.save({companyName,email,password});
+    message.style.color='#147a4c';message.textContent='Configuración completada. Abriendo ASISTIA…';
+    form.reset();
+  }catch(error){
+    message.style.color='';message.textContent=error&&error.message?error.message:'No se pudo completar la configuración.';
+    button.disabled=false;button.textContent='Intentar de nuevo';
+  }
+});
+</script>
+</body>
+</html>

@@ -6,7 +6,8 @@ import rateLimit from 'express-rate-limit';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
-import { randomUUID, createHash } from 'node:crypto';
+import { randomUUID, randomBytes, createHash, createCipheriv, createDecipheriv } from 'node:crypto';
+import { verifyLicenseDocument } from './license-verifier.js';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import Database from 'better-sqlite3';
@@ -30,6 +31,13 @@ db.pragma('busy_timeout = 5000');
 db.exec(`
 CREATE TABLE IF NOT EXISTS companies (
   id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS license_state (
+  id TEXT PRIMARY KEY, company_id TEXT NOT NULL UNIQUE REFERENCES companies(id),
+  license_id TEXT NOT NULL, signed_document TEXT NOT NULL,
+  last_validated_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+  device_id TEXT, activation_secret_encrypted TEXT,
+  remote_status TEXT NOT NULL DEFAULT 'active'
 );
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY, company_id TEXT NOT NULL REFERENCES companies(id),
@@ -85,6 +93,13 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 CREATE INDEX IF NOT EXISTS idx_audit_company_time ON audit_log(company_id, created_at);
 `);
+try { db.exec('ALTER TABLE license_state ADD COLUMN device_id TEXT'); }
+catch (e) { if (!String(e.message).includes('duplicate column name')) throw e; }
+try { db.exec('ALTER TABLE license_state ADD COLUMN activation_secret_encrypted TEXT'); }
+catch (e) { if (!String(e.message).includes('duplicate column name')) throw e; }
+try { db.exec("ALTER TABLE license_state ADD COLUMN remote_status TEXT NOT NULL DEFAULT 'active'"); }
+catch (e) { if (!String(e.message).includes('duplicate column name')) throw e; }
+
 // Migra bases creadas antes de token_version sin borrar ni recrear tablas.
 try { db.exec('ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0'); }
 catch (e) { if (!String(e.message).includes('duplicate column name')) throw e; }
@@ -228,6 +243,223 @@ app.get('/api/health', (req,res) => {
     res.status(503).json({status:'error',database:'unavailable',service:'ASISTIA API',version:'0.3.0',time:now()});
   }
 });
+
+function licensePublicKey() {
+  return (process.env.ASISTIA_LICENSE_PUBLIC_KEY || '').replace(/\\n/g, '\n').trim();
+}
+function licenseStorageKey() {
+  const encoded = process.env.ASISTIA_LICENSE_STORAGE_KEY || '';
+  if (!encoded) return null;
+  try {
+    const key = Buffer.from(encoded, 'base64');
+    return key.length === 32 ? key : null;
+  } catch { return null; }
+}
+function encryptActivationSecret(secret) {
+  const key = licenseStorageKey();
+  if (!key) throw appError(503, 'Falta configurar ASISTIA_LICENSE_STORAGE_KEY para guardar la activación de forma cifrada.');
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', key, iv);
+  const encrypted = Buffer.concat([cipher.update(secret, 'utf8'), cipher.final()]);
+  return [iv, cipher.getAuthTag(), encrypted].map(part => part.toString('base64url')).join('.');
+}
+function decryptActivationSecret(value) {
+  const key = licenseStorageKey();
+  if (!key) throw appError(503, 'Falta configurar ASISTIA_LICENSE_STORAGE_KEY para renovar la licencia.');
+  const parts = String(value || '').split('.');
+  if (parts.length !== 3) throw appError(500, 'No se pudo leer la credencial de activación almacenada.');
+  try {
+    const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(parts[0], 'base64url'));
+    decipher.setAuthTag(Buffer.from(parts[1], 'base64url'));
+    return Buffer.concat([decipher.update(Buffer.from(parts[2], 'base64url')), decipher.final()]).toString('utf8');
+  } catch { throw appError(500, 'La credencial de activación almacenada no pudo descifrarse.'); }
+}
+function remoteLicensingUrl() {
+  const raw = (process.env.LICENSING_SERVICE_URL || '').trim();
+  if (!raw) throw appError(503, 'El servicio remoto de licencias no está configurado en este equipo.');
+  let parsed;
+  try { parsed = new URL(raw); } catch { throw appError(503, 'La URL del servicio remoto de licencias no es válida.'); }
+  if (production && parsed.protocol !== 'https:') throw appError(503, 'El servicio remoto de licencias debe usar HTTPS en producción.');
+  if (!['http:', 'https:'].includes(parsed.protocol)) throw appError(503, 'El protocolo del servicio remoto de licencias no es válido.');
+  return parsed.toString().replace(/\/$/, '');
+}
+async function callRemoteLicensing(path, body) {
+  const base = remoteLicensingUrl();
+  let response;
+  try {
+    response = await fetch(base + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(8000)
+    });
+  } catch {
+    throw appError(503, 'No se pudo conectar con el servicio de licencias. Comprueba internet e inténtalo de nuevo.');
+  }
+  let data;
+  try { data = await response.json(); } catch { throw appError(503, 'El servicio de licencias devolvió una respuesta no válida.'); }
+  if (!response.ok) {
+    const status = response.status >= 500 ? 503 : response.status;
+    throw appError(status, typeof data.error === 'string' ? data.error.slice(0, 240) : 'El servicio remoto rechazó la operación.');
+  }
+  return data;
+}
+function readCompanyLicense(companyId) {
+  const saved = db.prepare('SELECT license_id, signed_document, last_validated_at, remote_status FROM license_state WHERE company_id=?').get(companyId);
+  if (!saved) return { status:'unlicensed', license:null, lastValidatedAt:null };
+  if (saved.remote_status && saved.remote_status !== 'active') {
+    return { status:saved.remote_status, license:null, lastValidatedAt:saved.last_validated_at };
+  }
+  const publicKey = licensePublicKey();
+  if (!publicKey) return { status:'configuration_error', license:null, lastValidatedAt:saved.last_validated_at };
+  try {
+    const license = verifyLicenseDocument(saved.signed_document, publicKey, new Date());
+    if (license.companyId !== companyId || license.licenseId !== saved.license_id) {
+      return { status:'invalid', license:null, lastValidatedAt:saved.last_validated_at };
+    }
+    return { status:license.status, license, lastValidatedAt:saved.last_validated_at };
+  } catch {
+    return { status:'invalid', license:null, lastValidatedAt:saved.last_validated_at };
+  }
+}
+function assertLicenseAllowsEmployee(companyId) {
+  if (process.env.ASISTIA_LICENSE_ENFORCEMENT !== 'true') return;
+  const state = readCompanyLicense(companyId);
+  if (!state.license || !['active','offline_grace'].includes(state.status)) {
+    throw appError(402, 'Se requiere una licencia ASISTIA válida para registrar empleados. Conservas el acceso al historial y a sus exportaciones.');
+  }
+  const activeEmployees = db.prepare('SELECT COUNT(*) AS total FROM employees WHERE company_id=? AND active=1').get(companyId).total;
+  if (activeEmployees >= state.license.maxEmployees) {
+    throw appError(409, `El plan actual permite hasta ${state.license.maxEmployees} empleados activos. Amplía tu plan para registrar más.`);
+  }
+}
+app.get('/api/license/status', authenticate, roles('admin'), (req,res) => {
+  const state = readCompanyLicense(req.user.companyId);
+  res.json({
+    status:state.status,
+    lastValidatedAt:state.lastValidatedAt,
+    license:state.license ? {
+      licenseId:state.license.licenseId,
+      companyId:state.license.companyId,
+      planCode:state.license.planCode,
+      expiresAt:state.license.expiresAt,
+      offlineGraceUntil:state.license.offlineGraceUntil,
+      maxEmployees:state.license.maxEmployees,
+      maxDevices:state.license.maxDevices,
+      licenseVersion:state.license.licenseVersion
+    } : null,
+    remoteActivation: Boolean(db.prepare("SELECT 1 FROM license_state WHERE company_id=? AND activation_secret_encrypted IS NOT NULL AND remote_status='active'").get(req.user.companyId))
+  });
+});
+app.post('/api/license/activate', authenticate, roles('admin'), async (req,res,next) => {
+  try {
+    const input=z.object({
+      signedDocument:z.string().min(20).max(16384).optional(),
+      activationCode:z.string().min(20).max(128).optional()
+    }).refine(value => Boolean(value.signedDocument) !== Boolean(value.activationCode), 'Proporciona signedDocument o activationCode, pero no ambos.').parse(req.body);
+    const publicKey=licensePublicKey();
+    if (!publicKey) throw appError(503,'La verificación de licencias no está configurada en este equipo.');
+    const existingActivation = db.prepare("SELECT activation_secret_encrypted,remote_status FROM license_state WHERE company_id=?").get(req.user.companyId);
+    if (input.signedDocument && existingActivation?.activation_secret_encrypted && existingActivation.remote_status === 'active') {
+      throw appError(409,'Desactiva primero la activación remota antes de instalar una licencia manual.');
+    }
+    let signedDocument = input.signedDocument;
+    let activationSecretEncrypted = null;
+    let deviceId = null;
+    if (input.activationCode) {
+      // La clave de cifrado se comprueba antes de consumir el código remoto de un solo uso.
+      if (!licenseStorageKey()) throw appError(503,'Falta configurar ASISTIA_LICENSE_STORAGE_KEY para activar licencias remotas.');
+      const current = db.prepare('SELECT license_id, device_id, activation_secret_encrypted, remote_status FROM license_state WHERE company_id=?').get(req.user.companyId);
+      if (current?.activation_secret_encrypted && current.remote_status === 'active') {
+        throw appError(409,'Esta empresa ya tiene una activación remota. Renueva la licencia o desactiva el dispositivo primero.');
+      }
+      deviceId = current?.device_id || randomUUID();
+      const remote = await callRemoteLicensing('/v1/activate', {
+        activationCode:input.activationCode, companyId:req.user.companyId, deviceId
+      });
+      if (typeof remote.signedDocument !== 'string' || typeof remote.activationSecret !== 'string') {
+        throw appError(503,'La respuesta de activación remota está incompleta.');
+      }
+      signedDocument = remote.signedDocument;
+      activationSecretEncrypted = encryptActivationSecret(remote.activationSecret);
+    }
+    let license;
+    try { license=verifyLicenseDocument(signedDocument,publicKey,new Date()); }
+    catch(e) { throw appError(422,e.message || 'Documento de licencia inválido.'); }
+    if (license.companyId !== req.user.companyId) throw appError(403,'La licencia no corresponde a esta empresa.');
+    if (!['active','offline_grace'].includes(license.status)) throw appError(402,'La licencia está vencida o fuera del periodo de gracia.');
+    const existing=db.prepare('SELECT id FROM license_state WHERE company_id=?').get(req.user.companyId);
+    const timestamp=now();
+    db.prepare(`INSERT INTO license_state(id,company_id,license_id,signed_document,last_validated_at,updated_at,device_id,activation_secret_encrypted,remote_status)
+      VALUES(?,?,?,?,?,?,?,?, 'active')
+      ON CONFLICT(company_id) DO UPDATE SET license_id=excluded.license_id,
+      signed_document=excluded.signed_document,last_validated_at=excluded.last_validated_at,updated_at=excluded.updated_at,
+      device_id=COALESCE(excluded.device_id,license_state.device_id),
+      activation_secret_encrypted=excluded.activation_secret_encrypted,remote_status='active'`)
+      .run(existing ? existing.id : randomUUID(),req.user.companyId,license.licenseId,signedDocument,timestamp,timestamp,deviceId,activationSecretEncrypted);
+    writeAudit(req.user.companyId,req.user.id,'license.activated','license',license.licenseId,{planCode:license.planCode,expiresAt:license.expiresAt,maxEmployees:license.maxEmployees,maxDevices:license.maxDevices,remote:Boolean(input.activationCode)});
+    res.status(200).json({ok:true,status:license.status,license:{
+      licenseId:license.licenseId,planCode:license.planCode,expiresAt:license.expiresAt,
+      offlineGraceUntil:license.offlineGraceUntil,maxEmployees:license.maxEmployees,maxDevices:license.maxDevices
+    },remoteActivation:Boolean(input.activationCode)});
+  } catch(e) { next(e); }
+});
+app.post('/api/license/refresh', authenticate, roles('admin'), async (req,res,next) => {
+  try {
+    const saved = db.prepare("SELECT * FROM license_state WHERE company_id=?").get(req.user.companyId);
+    if (!saved?.activation_secret_encrypted || !saved.device_id) throw appError(409,'Esta instalación no tiene una activación remota renovable.');
+    if (saved.remote_status !== 'active') throw appError(403,'La activación de esta instalación no está activa.');
+    const activationSecret = decryptActivationSecret(saved.activation_secret_encrypted);
+    let remote;
+    try {
+      remote = await callRemoteLicensing('/v1/licenses/refresh', {
+        licenseId:saved.license_id, deviceId:saved.device_id, activationSecret
+      });
+    } catch (error) {
+      if (error.status === 403) {
+        const timestamp = now();
+        db.prepare("UPDATE license_state SET remote_status='revoked',last_validated_at=?,updated_at=? WHERE company_id=?")
+          .run(timestamp,timestamp,req.user.companyId);
+        writeAudit(req.user.companyId,req.user.id,'license.remote_rejected','license',saved.license_id,{httpStatus:403});
+      }
+      throw error;
+    }
+    if (typeof remote.signedDocument !== 'string') throw appError(503,'La respuesta de renovación remota está incompleta.');
+    let license;
+    try { license = verifyLicenseDocument(remote.signedDocument, licensePublicKey(), new Date()); }
+    catch(e) { throw appError(422,e.message || 'El documento renovado no es válido.'); }
+    if (license.companyId !== req.user.companyId || license.licenseId !== saved.license_id) throw appError(403,'La renovación no corresponde a esta instalación.');
+    // El documento almacenado ya fue verificado al activarse; extraemos solo su versión para evitar comparar fechas contra una hora artificial.
+    let currentVersion = 0;
+    try { currentVersion = Number(JSON.parse(Buffer.from(saved.signed_document.split('.')[0], 'base64url').toString('utf8')).licenseVersion) || 0; }
+    catch { throw appError(500, 'No se pudo comprobar la versión de la licencia almacenada.'); }
+    if (license.licenseVersion < currentVersion) throw appError(409,'El servicio devolvió una versión de licencia anterior.');
+    const timestamp = now();
+    db.prepare("UPDATE license_state SET signed_document=?,last_validated_at=?,updated_at=?,remote_status='active' WHERE company_id=?")
+      .run(remote.signedDocument,timestamp,timestamp,req.user.companyId);
+    writeAudit(req.user.companyId,req.user.id,'license.refreshed','license',license.licenseId,{licenseVersion:license.licenseVersion,expiresAt:license.expiresAt});
+    res.json({ok:true,status:license.status,lastValidatedAt:timestamp,license:{
+      licenseId:license.licenseId,planCode:license.planCode,expiresAt:license.expiresAt,
+      offlineGraceUntil:license.offlineGraceUntil,maxEmployees:license.maxEmployees,maxDevices:license.maxDevices,
+      licenseVersion:license.licenseVersion
+    }});
+  } catch(e) { next(e); }
+});
+app.post('/api/license/deactivate', authenticate, roles('admin'), async (req,res,next) => {
+  try {
+    const saved = db.prepare("SELECT * FROM license_state WHERE company_id=?").get(req.user.companyId);
+    if (!saved?.activation_secret_encrypted || !saved.device_id) throw appError(409,'Esta instalación no tiene una activación remota que liberar.');
+    const activationSecret = decryptActivationSecret(saved.activation_secret_encrypted);
+    await callRemoteLicensing('/v1/licenses/deactivate', {
+      licenseId:saved.license_id, deviceId:saved.device_id, activationSecret
+    });
+    const timestamp = now();
+    db.prepare("UPDATE license_state SET activation_secret_encrypted=NULL,remote_status='deactivated',last_validated_at=?,updated_at=? WHERE company_id=?")
+      .run(timestamp,timestamp,req.user.companyId);
+    writeAudit(req.user.companyId,req.user.id,'license.deactivated','license',saved.license_id,{deviceId:saved.device_id});
+    res.json({ok:true,status:'deactivated',historyPreserved:true});
+  } catch(e) { next(e); }
+});
 app.get('/api/me', authenticate, (req,res) => res.json({user:req.user}));
 app.get('/api/company', authenticate, (req,res) => {
   const company = db.prepare('SELECT id,name,created_at AS createdAt FROM companies WHERE id=?').get(req.user.companyId);
@@ -322,6 +554,7 @@ app.get('/api/employees', authenticate, (req,res,next) => {
 app.post('/api/employees', authenticate, roles('admin','supervisor'), (req,res,next) => {
   try {
     const input = employeeSchema.parse(req.body);
+    assertLicenseAllowsEmployee(req.user.companyId);
     const id = randomUUID(), created = now();
     db.prepare('INSERT INTO employees(id,company_id,employee_number,full_name,email,rfc,branch,created_at) VALUES(?,?,?,?,?,?,?,?)')
       .run(id,req.user.companyId,input.employeeNumber,input.fullName,input.email || null,input.rfc || null,input.branch,created);

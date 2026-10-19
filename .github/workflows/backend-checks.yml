@@ -18,3 +18,5 @@ jobs:
       - run: npm ci
       - run: npm audit --omit=dev
       - run: npm test
+      - name: Test desktop API client
+        run: node --test ../desktop/api-client.test.cjs

@@ -1,0 +1,96 @@
+name: ASISTIA Windows installer
+
+on:
+  push:
+    branches:
+      - feature/desktop-licensing
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-package:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js for the local API
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.3
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install API dependencies
+        run: npm ci
+        working-directory: backend
+
+      - name: Run API and licensing tests
+        run: npm test
+        working-directory: backend
+
+      - name: Install licensing service dependencies
+        run: npm install --no-audit --no-fund
+        working-directory: licensing-service
+
+      - name: Test licensing service
+        run: npm test
+        working-directory: licensing-service
+
+      - name: Prepare standalone Node.js runtime
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'node-runtime.zip'
+          $extract = Join-Path $env:RUNNER_TEMP 'node-runtime'
+          Invoke-WebRequest -Uri 'https://nodejs.org/dist/v22.23.3/node-v22.23.3-win-x64.zip' -OutFile $archive
+          Expand-Archive -Path $archive -DestinationPath $extract -Force
+          New-Item -ItemType Directory -Force -Path 'backend/runtime' | Out-Null
+          Copy-Item (Join-Path $extract 'node-v22.23.3-win-x64/node.exe') 'backend/runtime/node.exe' -Force
+          if (!(Test-Path 'backend/runtime/node.exe')) { throw 'No se pudo preparar node.exe.' }
+
+      - name: Install desktop packaging dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Generate branded Windows icon
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Drawing
+          $source = [System.Drawing.Image]::FromFile((Resolve-Path 'desktop/assets/asistia-logo.png'))
+          $bitmap = New-Object System.Drawing.Bitmap 256, 256, ([System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+          $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+          $graphics.Clear([System.Drawing.Color]::Transparent)
+          $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
+          $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+          $scale = [Math]::Min(224 / $source.Width, 176 / $source.Height)
+          $width = [int]($source.Width * $scale)
+          $height = [int]($source.Height * $scale)
+          $x = [int]((256 - $width) / 2)
+          $y = [int]((256 - $height) / 2)
+          $graphics.DrawImage($source, $x, $y, $width, $height)
+          New-Item -ItemType Directory -Force -Path 'desktop/assets' | Out-Null
+          $handle = $bitmap.GetHicon()
+          $icon = [System.Drawing.Icon]::FromHandle($handle)
+          $stream = [System.IO.File]::Create((Join-Path (Get-Location) 'desktop/assets/asistia.ico'))
+          try { $icon.Save($stream) } finally { $stream.Dispose(); $icon.Dispose(); $graphics.Dispose(); $bitmap.Dispose(); $source.Dispose() }
+          if (!(Test-Path 'desktop/assets/asistia.ico')) { throw 'No se pudo generar el icono de ASISTIA.' }
+
+      - name: Build Windows installer
+        run: npm run dist:win
+
+      - name: Verify installer exists
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem 'release/ASISTIA-Setup-*.exe' -ErrorAction SilentlyContinue
+          if (!$installer) { throw 'No se generó el instalador de ASISTIA.' }
+          Get-FileHash $installer.FullName -Algorithm SHA256 | Format-List
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ASISTIA-Windows-Installer
+          path: release/ASISTIA-Setup-*.exe
+          if-no-files-found: error
+          retention-days: 30
