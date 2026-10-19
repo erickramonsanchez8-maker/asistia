@@ -486,6 +486,7 @@ app.get('/api/users', authenticate, roles('admin'), (req,res,next) => {
 });
 app.post('/api/users', authenticate, roles('admin'), (req,res,next) => {
   try {
+    assertLicenseAllowsOperation(req.user.companyId, 'crear usuarios');
     const input=userSchema.parse(req.body);
     // El login solo recibe correo y contraseña: evita crear nuevas ambigüedades entre empresas.
     if (db.prepare('SELECT 1 FROM users WHERE email=? COLLATE NOCASE LIMIT 1').get(input.email)) throw appError(409,'El correo ya está registrado. Cada cuenta debe usar un correo único.');
@@ -534,6 +535,7 @@ app.post('/api/users/:id/reset-password', authenticate, roles('admin'), (req,res
 });
 app.patch('/api/users/:id/deactivate', authenticate, roles('admin'), (req,res,next) => {
   try {
+    assertLicenseAllowsOperation(req.user.companyId, 'desactivar usuarios');
     if (req.params.id === req.user.id) throw appError(400,'No puedes desactivar tu propia cuenta.');
     const target=db.prepare('SELECT id,role,active FROM users WHERE id=? AND company_id=?').get(req.params.id,req.user.companyId);
     if (!target || !target.active) throw appError(404,'Usuario no encontrado o ya inactivo.');
@@ -575,6 +577,7 @@ app.post('/api/employees', authenticate, roles('admin','supervisor'), (req,res,n
 });
 app.patch('/api/employees/:id/deactivate', authenticate, roles('admin'), (req,res,next) => {
   try {
+    assertLicenseAllowsOperation(req.user.companyId, 'desactivar empleados');
     const employee=db.prepare('SELECT id FROM employees WHERE id=? AND company_id=?').get(req.params.id,req.user.companyId);
     if (!employee) throw appError(404,'Empleado no encontrado.');
     db.transaction(() => {
