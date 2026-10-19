@@ -38,6 +38,10 @@
           "node_modules/**/*",
           "runtime/node.exe"
         ]
+      },
+      {
+        "from": "desktop/assets/asistia-logo.png",
+        "to": "asistia-logo.png"
       }
     ],
     "win": {
