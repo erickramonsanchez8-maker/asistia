@@ -25,7 +25,8 @@
       "desktop/setup.html",
       "desktop/api-client.js",
       "ASISTIA_Control_de_Asistencia.html",
-      "package.json"
+      "package.json",
+      "desktop/assets/asistia-logo.png"
     ],
     "extraResources": [
       {
@@ -43,7 +44,9 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "artifactName": "ASISTIA-Setup-${version}-${arch}.${ext}"
