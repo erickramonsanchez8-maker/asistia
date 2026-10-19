@@ -6,7 +6,7 @@ El instalador empaqueta la interfaz existente de ASISTIA, un runtime local de No
 
 ## Primera ejecución
 
-1. Instala ASISTIA con el archivo `ASISTIA-Setup-0.4.0-x64.exe`.
+1. Instala ASISTIA con el archivo `ASISTIA-Setup-0.4.1-x64.exe`.
 2. Abre ASISTIA desde el acceso directo.
 3. Escribe el nombre del negocio, el correo del administrador y una contraseña propia de al menos 14 caracteres.
 4. Espera a que se inicie el servicio local.
