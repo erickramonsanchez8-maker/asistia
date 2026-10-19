@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feature/desktop-licensing
+      - feature/license-expiry-readonly-policy
   workflow_dispatch:
 
 permissions:
