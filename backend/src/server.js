@@ -631,6 +631,7 @@ app.get('/api/attendance/events', authenticate, (req,res,next) => {
 });
 app.post('/api/attendance/corrections', authenticate, (req,res,next) => {
   try {
+    assertLicenseAllowsOperation(req.user.companyId, 'solicitar correcciones de asistencia');
     const input = correctionSchema.parse(req.body);
     if (Date.parse(input.proposedTime) > Date.now() + 5 * 60 * 1000) throw appError(400,'La hora propuesta no puede estar en el futuro.');
     const event = db.prepare('SELECT id,employee_id FROM attendance_events WHERE id=? AND company_id=?').get(input.eventId,req.user.companyId);
@@ -656,6 +657,7 @@ app.get('/api/attendance/corrections', authenticate, roles('admin','supervisor')
 });
 app.post('/api/attendance/corrections/:id/review', authenticate, roles('admin','supervisor'), (req,res,next) => {
   try {
+    assertLicenseAllowsOperation(req.user.companyId, 'revisar correcciones de asistencia');
     const input=z.object({decision:z.enum(['approved','rejected'])}).parse(req.body);
     const row=db.prepare('SELECT * FROM correction_requests WHERE id=? AND company_id=?').get(req.params.id,req.user.companyId);
     if (!row) throw appError(404,'Solicitud no encontrada.');
@@ -694,6 +696,7 @@ app.get('/api/agreements', authenticate, roles('admin','supervisor'), (req,res,n
 });
 app.post('/api/agreements', authenticate, roles('admin','supervisor'), (req,res,next) => {
   try {
+    assertLicenseAllowsOperation(req.user.companyId, 'registrar acuerdos laborales');
     const input=agreementSchema.parse(req.body);
     const employee=db.prepare('SELECT id FROM employees WHERE id=? AND company_id=?').get(input.employeeId,req.user.companyId);
     if (!employee) throw appError(404,'Empleado no encontrado.');
@@ -710,7 +713,7 @@ app.get('/api/reports/attendance.csv', authenticate, roles('admin','supervisor')
   const {from,to}=parseDateRange(req.query);
   const totalRows=db.prepare(`SELECT COUNT(*) AS total FROM attendance_events e LEFT JOIN attendance_adjustments a ON a.id=(SELECT aa.id FROM attendance_adjustments aa WHERE aa.original_event_id=e.id ORDER BY aa.rowid DESC LIMIT 1) WHERE e.company_id=? AND COALESCE(a.adjusted_time,e.occurred_at)>=? AND COALESCE(a.adjusted_time,e.occurred_at)<=?`).get(req.user.companyId,from.toISOString(),to.toISOString()).total;
   if (totalRows > 10000) throw appError(400,'La exportación supera 10,000 registros; acota el rango de fechas.');
-  const rows=db.prepare(`SELECT p.employee_number,p.full_name,p.branch,e.event_type,e.occurred_at,e.received_at,e.source,e.event_hash,
+  const rows=db.prepare(`SELECT p.employee_number,p.full_name,p.rfc,p.branch,e.event_type,e.occurred_at,e.received_at,e.source,e.event_hash,
     a.adjusted_time,a.reason AS adjustment_reason,a.adjustment_hash
     FROM attendance_events e JOIN employees p ON p.id=e.employee_id
     LEFT JOIN attendance_adjustments a ON a.id=(SELECT aa.id FROM attendance_adjustments aa WHERE aa.original_event_id=e.id ORDER BY aa.rowid DESC LIMIT 1)
@@ -722,7 +725,7 @@ app.get('/api/reports/attendance.csv', authenticate, roles('admin','supervisor')
     if (/^\s*[=+@\-]/.test(value)) value="'"+value;
     return '"' + value.replaceAll('"','""') + '"';
   };
-  const csv=['numero_empleado,nombre,sucursal,tipo_evento,fecha_evento_original,fecha_ajustada,razon_ajuste,hash_ajuste,fecha_recepcion,origen,hash_original',...rows.map(r=>[r.employee_number,r.full_name,r.branch,r.event_type,r.occurred_at,r.adjusted_time,r.adjustment_reason,r.adjustment_hash,r.received_at,r.source,r.event_hash].map(cell).join(','))].join('\r\n');
+  const csv=['numero_empleado,nombre,rfc,sucursal,tipo_evento,fecha_evento_original,fecha_ajustada,razon_ajuste,hash_ajuste,fecha_recepcion,origen,hash_original',...rows.map(r=>[r.employee_number,r.full_name,r.rfc,r.branch,r.event_type,r.occurred_at,r.adjusted_time,r.adjustment_reason,r.adjustment_hash,r.received_at,r.source,r.event_hash].map(cell).join(','))].join('\r\n');
   res.setHeader('Content-Type','text/csv; charset=utf-8');
   res.setHeader('Content-Disposition','attachment; filename="asistia-registros.csv"');
   res.send('\uFEFF'+csv);
