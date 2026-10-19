@@ -13,7 +13,7 @@ let startupPromise = null;
 const userData = app.getPath('userData');
 const logPath = path.join(userData, 'logs', 'asistia-desktop.log');
 function logDiagnostic(level, message) {
-  const line = `[${new Date().toISOString()}] [${level}] ${String(message).replace(/[\\r\\n]+/g, ' ').slice(0, 2000)}\\n`;
+  const line = `[${new Date().toISOString()}] [${level}] ${String(message).replace(/[\r\n]+/g, ' ').slice(0, 2000)}\n`;
   try { fs.mkdirSync(path.dirname(logPath), { recursive: true }); fs.appendFileSync(logPath, line, 'utf8'); } catch {}
   if (level === 'ERROR') console.error(line.trim()); else console.log(line.trim());
 }
@@ -86,7 +86,7 @@ async function waitForHealth(child, timeoutMs = 20000) {
     }
     await new Promise(resolve => setTimeout(resolve, 300));
   }
-  throw new Error('ASISTIA no pudo iniciar su servicio local en 20 segundos.');
+  throw new Error('ASISTIA no pudo iniciar su servicio local en 20 segundos. Consulta el registro: ' + logPath);
 }
 
 async function startBackend() {
@@ -194,7 +194,7 @@ ipcMain.handle('asistia:setup', async (_event, input) => {
       try { fs.unlinkSync(configPath); } catch {}
     }
     dialog.showErrorBox('No se pudo iniciar ASISTIA', error.message || 'Error desconocido.');
-    throw new Error((error.message || 'No se pudo iniciar ASISTIA.') + '\\n\\nRegistro de diagnóstico: ' + logPath);
+    throw new Error((error.message || 'No se pudo iniciar ASISTIA.') + '\n\nRegistro de diagnóstico: ' + logPath);
   }
 });
 
@@ -229,7 +229,7 @@ if (!gotLock) {
       await openProduct();
     } catch (error) {
       logDiagnostic('ERROR', 'Error durante el inicio de la aplicación: ' + (error.stack || error.message));
-      dialog.showErrorBox('ASISTIA no pudo iniciar', (error.message || 'Error desconocido.') + '\\n\\nRegistro: ' + logPath);
+      dialog.showErrorBox('ASISTIA no pudo iniciar', (error.message || 'Error desconocido.') + '\n\nRegistro: ' + logPath);
       app.quit();
     }
   });
