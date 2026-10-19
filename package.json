@@ -1,0 +1,61 @@
+{
+  "name": "asistia-desktop",
+  "version": "0.4.0",
+  "private": true,
+  "description": "Aplicación de escritorio para ASISTIA",
+  "main": "desktop/main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "dist:win": "electron-builder --win nsis --x64"
+  },
+  "devDependencies": {
+    "electron": "^35.7.5",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "mx.asistia.desktop",
+    "productName": "ASISTIA",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "desktop/main.cjs",
+      "desktop/preload.cjs",
+      "desktop/setup.html",
+      "desktop/api-client.js",
+      "ASISTIA_Control_de_Asistencia.html",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "backend",
+        "to": "backend",
+        "filter": [
+          "src/**/*",
+          "package.json",
+          "node_modules/**/*",
+          "runtime/node.exe"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "artifactName": "ASISTIA-Setup-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "ASISTIA",
+      "perMachine": false,
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}
