@@ -43,7 +43,7 @@ db.exec(`
 CREATE TABLE IF NOT EXISTS licenses (
   id TEXT PRIMARY KEY, company_id TEXT NOT NULL, plan_code TEXT NOT NULL,
   status TEXT NOT NULL CHECK(status IN ('active','revoked')),
-  suspended INTEGER NOT NULL DEFAULT 0,
+  suspended INTEGER NOT NULL DEFAULT 0, starts_at TEXT,
   activation_code_hash TEXT UNIQUE, max_employees INTEGER NOT NULL,
   max_devices INTEGER NOT NULL, issued_at TEXT NOT NULL, expires_at TEXT NOT NULL,
   version INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
@@ -62,6 +62,9 @@ CREATE INDEX IF NOT EXISTS idx_activations_license_status ON activations(license
 `);
 try { db.exec('ALTER TABLE licenses ADD COLUMN suspended INTEGER NOT NULL DEFAULT 0'); }
 catch (error) { if (!String(error.message).includes('duplicate column name')) throw error; }
+try { db.exec('ALTER TABLE licenses ADD COLUMN starts_at TEXT'); }
+catch (error) { if (!String(error.message).includes('duplicate column name')) throw error; }
+db.exec('UPDATE licenses SET starts_at=issued_at WHERE starts_at IS NULL');
 app.use('/admin', express.static(PUBLIC_DIR));
 
 function audit(licenseId, eventType, details = {}) {
@@ -70,11 +73,12 @@ function audit(licenseId, eventType, details = {}) {
 }
 function signLicense(row) {
   const issuedAt = iso(now());
+  const startsAt = row.starts_at || row.issued_at;
   const expiresAt = row.expires_at;
   const offlineGraceUntil = iso(new Date(Date.parse(expiresAt) + GRACE_DAYS * 86400000));
   const payload = {
     licenseId: row.id, companyId: row.company_id, planCode: row.plan_code, status: 'active',
-    issuedAt, expiresAt, offlineGraceUntil, maxEmployees: row.max_employees,
+    issuedAt, startsAt, expiresAt, offlineGraceUntil, maxEmployees: row.max_employees,
     maxDevices: row.max_devices, licenseVersion: row.version
   };
   const bytes = Buffer.from(JSON.stringify(payload), 'utf8');
@@ -82,7 +86,7 @@ function signLicense(row) {
 }
 function publicLicense(row) {
   return { licenseId: row.id, companyId: row.company_id, planCode: row.plan_code, status: row.status === 'revoked' ? 'revoked' : (row.suspended ? 'suspended' : 'active'),
-    maxEmployees: row.max_employees, maxDevices: row.max_devices, issuedAt: row.issued_at, expiresAt: row.expires_at, version: row.version };
+    maxEmployees: row.max_employees, maxDevices: row.max_devices, startsAt: row.starts_at || row.issued_at, issuedAt: row.issued_at, expiresAt: row.expires_at, version: row.version };
 }
 function adminOnly(req, res, next) {
   const header = req.get('authorization') || '';
@@ -101,7 +105,15 @@ const issueSchema = z.object({
   planCode: z.string().trim().min(1).max(40).regex(/^[A-Za-z0-9_-]+$/),
   maxEmployees: z.number().int().min(1).max(100000),
   maxDevices: z.number().int().min(1).max(100),
-  durationDays: z.number().int().min(1).max(3660)
+  durationDays: z.number().int().min(1).max(3660).optional(),
+  startsAt: z.string().datetime({ offset: true }).optional(),
+  expiresAt: z.string().datetime({ offset: true }).optional()
+}).refine(value => Boolean(value.durationDays) || Boolean(value.startsAt && value.expiresAt), {
+  message: 'Proporciona duración en días o las fechas de inicio y vencimiento.',
+  path: ['expiresAt']
+}).refine(value => !value.startsAt || !value.expiresAt || Date.parse(value.expiresAt) > Date.parse(value.startsAt), {
+  message: 'El vencimiento debe ser posterior al inicio.',
+  path: ['expiresAt']
 });
 const activationSchema = z.object({
   activationCode: z.string().min(20).max(128),
@@ -135,10 +147,17 @@ app.post('/v1/admin/licenses', adminOnly, (req, res, next) => {
   try {
     const input = issueSchema.parse(req.body);
     const id = randomUUID(), activationCode = randomSecret(32), created = now();
-    const expiresAt = iso(new Date(created.getTime() + input.durationDays * 86400000));
-    db.prepare(`INSERT INTO licenses(id,company_id,plan_code,status,activation_code_hash,max_employees,max_devices,issued_at,expires_at,version,created_at,updated_at)
-      VALUES(?,?,?,'active',?,?,?,?,?,1,?,?)`)
-      .run(id, input.companyId, input.planCode, hash(activationCode), input.maxEmployees, input.maxDevices, iso(created), expiresAt, iso(created), iso(created));
+    const startsAt = input.startsAt ? new Date(input.startsAt) : created;
+    const expiresAt = input.expiresAt
+      ? new Date(input.expiresAt)
+      : new Date(startsAt.getTime() + input.durationDays * 86400000);
+    if (!Number.isFinite(startsAt.getTime()) || !Number.isFinite(expiresAt.getTime()) || expiresAt <= startsAt) {
+      throw appError(400, 'El intervalo de vigencia no es válido.');
+    }
+    const issuedAt = iso(created), startsAtIso = iso(startsAt), expiresAtIso = iso(expiresAt);
+    db.prepare(`INSERT INTO licenses(id,company_id,plan_code,status,activation_code_hash,max_employees,max_devices,issued_at,expires_at,version,created_at,updated_at,starts_at)
+      VALUES(?,?,?,'active',?,?,?,?,?,1,?,?,?)`)
+      .run(id, input.companyId, input.planCode, hash(activationCode), input.maxEmployees, input.maxDevices, issuedAt, expiresAtIso, issuedAt, issuedAt, startsAtIso);
     audit(id, 'license.issued', { planCode: input.planCode, maxEmployees: input.maxEmployees, maxDevices: input.maxDevices });
     res.status(201).json({ license: publicLicense(db.prepare('SELECT * FROM licenses WHERE id=?').get(id)), activationCode });
   } catch (error) { next(error); }
@@ -150,6 +169,7 @@ app.post('/v1/activate', (req, res, next) => {
     const license = db.prepare('SELECT * FROM licenses WHERE activation_code_hash=?').get(hash(input.activationCode));
     if (!license || license.status !== 'active' || license.suspended) throw appError(403, 'El código de activación es inválido, está suspendido o la licencia está revocada.');
     if (license.company_id !== input.companyId) throw appError(403, 'La licencia no corresponde a esta empresa.');
+    if (Date.parse(license.starts_at || license.issued_at) > now().getTime()) throw appError(402, 'La vigencia todavía no inicia; activa el código a partir de la fecha de inicio.');
     if (Date.parse(license.expires_at) < now().getTime()) throw appError(402, 'La suscripción venció; solicita una renovación al proveedor.');
     let activation = db.prepare('SELECT * FROM activations WHERE license_id=? AND device_id=?').get(license.id, input.deviceId);
     let activationSecret;
@@ -218,14 +238,18 @@ app.post('/v1/admin/licenses/:id/activation-code', adminOnly, (req, res, next) =
 
 app.post('/v1/admin/licenses/:id/renew', adminOnly, (req, res, next) => {
   try {
-    const input = z.object({ durationDays: z.number().int().min(1).max(3660) }).parse(req.body);
+    const input = z.object({
+      durationDays: z.number().int().min(1).max(3660).optional(),
+      expiresAt: z.string().datetime({ offset: true }).optional()
+    }).refine(value => Boolean(value.durationDays) !== Boolean(value.expiresAt), 'Proporciona durationDays o expiresAt, pero no ambos.').parse(req.body);
     const license = db.prepare("SELECT * FROM licenses WHERE id=? AND status='active'").get(req.params.id);
     if (!license) throw appError(404, 'Licencia activa no encontrada.');
     const base = Math.max(Date.parse(license.expires_at), now().getTime());
-    const expiresAt = iso(new Date(base + input.durationDays * 86400000));
+    const expiresAt = input.expiresAt ? new Date(input.expiresAt).toISOString() : iso(new Date(base + input.durationDays * 86400000));
+    if (Date.parse(expiresAt) <= base) throw appError(400, 'La nueva fecha debe extender la vigencia actual.');
     const timestamp = iso(now());
     db.prepare('UPDATE licenses SET expires_at=?,version=version+1,updated_at=? WHERE id=?').run(expiresAt, timestamp, license.id);
-    audit(license.id, 'license.renewed', { durationDays: input.durationDays, expiresAt });
+    audit(license.id, 'license.renewed', { durationDays: input.durationDays || null, expiresAt });
     const updated = db.prepare('SELECT * FROM licenses WHERE id=?').get(license.id);
     res.json({ license: publicLicense(updated) });
   } catch (error) { next(error); }
