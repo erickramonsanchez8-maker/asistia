@@ -32,6 +32,14 @@ jobs:
         run: npm test
         working-directory: backend
 
+      - name: Install licensing service dependencies
+        run: npm install --no-audit --no-fund
+        working-directory: licensing-service
+
+      - name: Test licensing service
+        run: npm test
+        working-directory: licensing-service
+
       - name: Prepare standalone Node.js runtime
         shell: pwsh
         run: |
