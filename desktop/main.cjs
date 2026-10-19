@@ -1,7 +1,6 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
-const os = require('node:os');
 const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
 
@@ -10,7 +9,6 @@ const API_URL = `http://127.0.0.1:${PORT}`;
 let mainWindow = null;
 let backendProcess = null;
 let startupPromise = null;
-let stopping = false;
 
 const userData = app.getPath('userData');
 const configPath = path.join(userData, 'config.json');
@@ -179,13 +177,17 @@ ipcMain.handle('asistia:setup', async (_event, input) => {
     await openProduct();
     return { ok: true };
   } catch (error) {
+    // Si el arranque no alcanzó a confirmar la API, conserva la credencial temporal
+    // para reintentar y retira solo la configuración incompleta.
+    if (fs.existsSync(bootstrapPath)) {
+      try { fs.unlinkSync(configPath); } catch {}
+    }
     dialog.showErrorBox('No se pudo iniciar ASISTIA', error.message || 'Error desconocido.');
     throw new Error('No se pudo iniciar ASISTIA. Revisa la configuración y vuelve a abrir la aplicación.');
   }
 });
 
 app.on('before-quit', () => {
-  stopping = true;
   if (backendProcess && backendProcess.exitCode === null) {
     try { backendProcess.kill(); } catch {}
   }
