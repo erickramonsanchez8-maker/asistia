@@ -421,7 +421,7 @@ app.post('/api/license/refresh', authenticate, roles('admin'), async (req,res,ne
   try {
     const saved = db.prepare("SELECT * FROM license_state WHERE company_id=?").get(req.user.companyId);
     if (!saved?.activation_secret_encrypted || !saved.device_id) throw appError(409,'Esta instalación no tiene una activación remota renovable.');
-    if (saved.remote_status !== 'active') throw appError(403,'La activación de esta instalación no está activa.');
+    if (!['active','suspended'].includes(saved.remote_status)) throw appError(403,'La activación de esta instalación no está activa.');
     const activationSecret = decryptActivationSecret(saved.activation_secret_encrypted);
     let remote;
     try {
@@ -430,10 +430,11 @@ app.post('/api/license/refresh', authenticate, roles('admin'), async (req,res,ne
       });
     } catch (error) {
       if (error.status === 403) {
+        const remoteStatus = /suspend/i.test(error.message || '') ? 'suspended' : 'revoked';
         const timestamp = now();
-        db.prepare("UPDATE license_state SET remote_status='revoked',last_validated_at=?,updated_at=? WHERE company_id=?")
-          .run(timestamp,timestamp,req.user.companyId);
-        writeAudit(req.user.companyId,req.user.id,'license.remote_rejected','license',saved.license_id,{httpStatus:403});
+        db.prepare("UPDATE license_state SET remote_status=?,last_validated_at=?,updated_at=? WHERE company_id=?")
+          .run(remoteStatus,timestamp,timestamp,req.user.companyId);
+        writeAudit(req.user.companyId,req.user.id,'license.remote_rejected','license',saved.license_id,{httpStatus:403,remoteStatus});
       }
       throw error;
     }
