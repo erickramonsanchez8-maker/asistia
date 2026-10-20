@@ -202,7 +202,8 @@ app.post('/v1/licenses/refresh', (req, res, next) => {
     const input = deviceSchema.parse(req.body);
     activationFor(input.licenseId, input.deviceId, input.activationSecret);
     const license = db.prepare('SELECT * FROM licenses WHERE id=?').get(input.licenseId);
-    if (!license || license.status !== 'active' || license.suspended) throw appError(403, 'La licencia está suspendida, revocada o no existe.');
+    if (!license || license.status !== 'active') throw appError(403, 'La licencia está revocada o no existe.');
+    if (license.suspended) throw appError(403, 'La licencia está suspendida.');
     if (Date.parse(license.expires_at) < now().getTime()) throw appError(402, 'La suscripción venció; el administrador debe renovarla.');
     const timestamp = iso(now());
     db.prepare('UPDATE activations SET last_seen_at=? WHERE license_id=? AND device_id=?').run(timestamp, license.id, input.deviceId);
