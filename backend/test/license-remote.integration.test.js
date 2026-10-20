@@ -142,6 +142,7 @@ test('la API local activa, renueva y desactiva usando el servicio remoto', async
   assert.equal(suspendedRefresh.status, 403);
   const suspendedStatus = await request('/api/license/status');
   assert.equal(suspendedStatus.data.status, 'suspended');
+  assert.equal(suspendedStatus.data.remoteActivation, true);
   remoteSuspended = false;
   const resumedRefresh = await request('/api/license/refresh', { method: 'POST', body: {} });
   assert.equal(resumedRefresh.status, 200, JSON.stringify(resumedRefresh.data));
