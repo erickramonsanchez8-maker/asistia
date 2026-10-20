@@ -97,8 +97,8 @@
       planCode: String(form.get('planCode')).trim(),
       maxEmployees: Number(form.get('maxEmployees')),
       maxDevices: Number(form.get('maxDevices')),
-      startsAt: new Date(String(form.get('startsAt')) + 'T00:00:00.000Z').toISOString(),
-      expiresAt: new Date(String(form.get('expiresAt')) + 'T23:59:59.999Z').toISOString()
+      startsAt: new Date(String(form.get('startsAt')) + 'T00:00:00.000-06:00').toISOString(),
+      expiresAt: new Date(String(form.get('expiresAt')) + 'T23:59:59.999-06:00').toISOString()
     };
     if (String(form.get('expiresAt')) <= String(form.get('startsAt'))) {
       setStatus($('listStatus'), 'El vencimiento debe ser posterior a la fecha de inicio.', 'error');
@@ -127,8 +127,8 @@
       if (action === 'renew') {
         const date = prompt('Nueva fecha de vencimiento (AAAA-MM-DD). Debe ser posterior al vencimiento actual.', '');
         if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
-        if (!confirm('¿Extender la licencia hasta el final del día ' + date + ' UTC?')) return;
-        await api('/v1/admin/licenses/' + encodeURIComponent(id) + '/renew', { method: 'POST', body: { expiresAt: new Date(date + 'T23:59:59.999Z').toISOString() } });
+        if (!confirm('¿Extender la licencia hasta el final del día ' + date + ' en hora de Jalisco (UTC-6)?')) return;
+        await api('/v1/admin/licenses/' + encodeURIComponent(id) + '/renew', { method: 'POST', body: { expiresAt: new Date(date + 'T23:59:59.999-06:00').toISOString() } });
       } else if (action === 'code') {
         if (!confirm('El código nuevo invalida cualquier código de activación pendiente. ¿Continuar?')) return;
         const result = await api('/v1/admin/licenses/' + encodeURIComponent(id) + '/activation-code', { method: 'POST', body: {} });
