@@ -360,7 +360,7 @@ app.get('/api/license/status', authenticate, roles('admin'), (req,res) => {
       maxDevices:state.license.maxDevices,
       licenseVersion:state.license.licenseVersion
     } : null,
-    remoteActivation: Boolean(db.prepare("SELECT 1 FROM license_state WHERE company_id=? AND activation_secret_encrypted IS NOT NULL AND remote_status='active'").get(req.user.companyId))
+    remoteActivation: Boolean(db.prepare("SELECT 1 FROM license_state WHERE company_id=? AND activation_secret_encrypted IS NOT NULL AND remote_status IN ('active','suspended')").get(req.user.companyId))
   });
 });
 app.post('/api/license/activate', authenticate, roles('admin'), async (req,res,next) => {
