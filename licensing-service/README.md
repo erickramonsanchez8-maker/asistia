@@ -25,7 +25,7 @@ La clave pública correspondiente debe configurarse en la API local de ASISTIA c
 
 ## Panel administrativo
 
-Tras configurar y desplegar el servicio bajo HTTPS, abre `/admin/`. Introduce el token administrativo del servidor; el navegador lo mantiene únicamente en memoria y no lo escribe en `localStorage` ni `sessionStorage`. El panel permite emitir licencias, consultar el registro, generar códigos nuevos, renovar, suspender, reactivar y revocar. El código de activación solo se devuelve al emitirlo y debe copiarse/entregarse por un canal privado. Las fechas se capturan en UTC; la fecha final se puede introducir como fecha de calendario y se interpreta hasta las 23:59:59.999 UTC.
+Tras configurar y desplegar el servicio bajo HTTPS, abre `/admin/`. Introduce el token administrativo del servidor; el navegador lo mantiene únicamente en memoria y no lo escribe en `localStorage` ni `sessionStorage`. El panel permite emitir licencias, consultar el registro, generar códigos nuevos, renovar, suspender, reactivar y revocar. El código de activación solo se devuelve al emitirlo y debe copiarse/entregarse por un canal privado. El panel interpreta las fechas de calendario en hora de Jalisco, México (UTC−6); la fecha final vence a las 23:59:59.999 de ese día local.
 
 El panel requiere conocer el `companyId` exacto de la empresa en la API local de ASISTIA. Confírmalo desde el entorno de administración de esa instalación antes de emitir el código; no uses el nombre comercial como sustituto.
 
