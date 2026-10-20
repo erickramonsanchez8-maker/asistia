@@ -81,6 +81,38 @@ jobs:
       - name: Build Windows installer
         run: npm run dist:win
 
+      - name: Smoke test packaged backend runtime and dependencies
+        shell: pwsh
+        run: |
+          $backend = Join-Path (Get-Location) 'release/win-unpacked/resources/backend'
+          $node = Join-Path $backend 'runtime/node.exe'
+          if (!(Test-Path $node)) { throw 'Falta el runtime de Node empaquetado.' }
+          if (!(Test-Path (Join-Path $backend 'node_modules/dotenv/package.json'))) { throw 'Falta dotenv en el backend empaquetado.' }
+          $env:HOST = '127.0.0.1'
+          $env:PORT = '31739'
+          $env:DATABASE_PATH = Join-Path $env:RUNNER_TEMP 'asistia-package-smoke.sqlite'
+          $env:JWT_SECRET = 'ci-smoke-secret-with-more-than-thirty-two-characters'
+          $env:BOOTSTRAP_ADMIN_EMAIL = 'smoke@example.test'
+          $env:BOOTSTRAP_ADMIN_PASSWORD = 'CI-smoke-password-12345'
+          $env:CORS_ORIGIN = 'http://127.0.0.1:31739'
+          $stdout = Join-Path $env:RUNNER_TEMP 'asistia-package-smoke.out.log'
+          $stderr = Join-Path $env:RUNNER_TEMP 'asistia-package-smoke.err.log'
+          $process = Start-Process -FilePath $node -ArgumentList @('src/server.js') -WorkingDirectory $backend -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          try {
+            $ready = $false
+            for ($i = 0; $i -lt 40; $i++) {
+              if ($process.HasExited) { throw "El backend empaquetado terminó. $((Get-Content $stderr -Raw -ErrorAction SilentlyContinue))" }
+              try {
+                $health = Invoke-RestMethod -Uri 'http://127.0.0.1:31739/api/health' -TimeoutSec 2
+                if ($health.status -eq 'ok') { $ready = $true; break }
+              } catch {}
+              Start-Sleep -Milliseconds 500
+            }
+            if (!$ready) { throw "El backend empaquetado no respondió. $((Get-Content $stderr -Raw -ErrorAction SilentlyContinue))" }
+          } finally {
+            if (!$process.HasExited) { Stop-Process -Id $process.Id -Force }
+          }
+
       - name: Verify installer exists
         shell: pwsh
         run: |
