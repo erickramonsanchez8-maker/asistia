@@ -105,6 +105,7 @@ async function startBackend() {
     const env = {
       ...process.env,
       NODE_ENV: 'production',
+      ASISTIA_LICENSE_ENFORCEMENT: 'true',
       HOST: '127.0.0.1',
       PORT: String(PORT),
       DATABASE_PATH: path.join(dataDir, 'asistia.sqlite'),
