@@ -84,7 +84,7 @@ export function verifyLicenseDocument(document, publicKey, now = new Date()) {
 
   let state = 'active';
   if (currentTime < startsAt) state = 'scheduled';
-  else if (currentTime > expiresAt && currentTime <= offlineGraceUntil) state = 'offline_grace';
+  else if (currentTime >= expiresAt && currentTime <= offlineGraceUntil) state = 'offline_grace';
   if (currentTime > offlineGraceUntil) state = 'expired';
 
   return Object.freeze({
