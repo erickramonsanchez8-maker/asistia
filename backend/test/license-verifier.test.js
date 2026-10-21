@@ -36,6 +36,16 @@ test('acepta licencia firmada vigente y devuelve límites', () => {
   assert.equal(result.companyId, 'company-test-001');
 });
 
+test('la licencia deja de estar activa exactamente al llegar expiresAt', () => {
+  const expiry = '2026-11-01T00:00:00.000Z';
+  const result = verifyLicenseDocument(
+    makeLicense({ expiresAt: expiry }),
+    publicKey,
+    new Date(expiry)
+  );
+  assert.equal(result.status, 'offline_grace');
+});
+
 test('permite estado de gracia solo hasta la fecha firmada', () => {
   const result = verifyLicenseDocument(makeLicense(), publicKey, new Date('2026-11-05T00:00:00Z'));
   assert.equal(result.status, 'offline_grace');
