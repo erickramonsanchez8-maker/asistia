@@ -16,6 +16,7 @@
     "appId": "mx.asistia.desktop",
     "productName": "ASISTIA",
     "asar": true,
+    "afterPack": "desktop/after-pack.cjs",
     "directories": {
       "output": "release"
     },
