@@ -171,7 +171,7 @@ app.post('/v1/activate', (req, res, next) => {
     if (!license || license.status !== 'active' || license.suspended) throw appError(403, 'El código de activación es inválido, está suspendido o la licencia está revocada.');
     if (license.company_id !== input.companyId) throw appError(403, 'La licencia no corresponde a esta empresa.');
     if (Date.parse(license.starts_at || license.issued_at) > now().getTime()) throw appError(402, 'La vigencia todavía no inicia; activa el código a partir de la fecha de inicio.');
-    if (Date.parse(license.expires_at) < now().getTime()) throw appError(402, 'La suscripción venció; solicita una renovación al proveedor.');
+    if (Date.parse(license.expires_at) <= now().getTime()) throw appError(402, 'La suscripción venció; solicita una renovación al proveedor.');
     let activation = db.prepare('SELECT * FROM activations WHERE license_id=? AND device_id=?').get(license.id, input.deviceId);
     let activationSecret;
     if (activation?.status === 'active') {
@@ -204,7 +204,7 @@ app.post('/v1/licenses/refresh', (req, res, next) => {
     const license = db.prepare('SELECT * FROM licenses WHERE id=?').get(input.licenseId);
     if (!license || license.status !== 'active') throw appError(403, 'La licencia está revocada o no existe.');
     if (license.suspended) throw appError(403, 'La licencia está suspendida.');
-    if (Date.parse(license.expires_at) < now().getTime()) throw appError(402, 'La suscripción venció; el administrador debe renovarla.');
+    if (Date.parse(license.expires_at) <= now().getTime()) throw appError(402, 'La suscripción venció; el administrador debe renovarla.');
     const timestamp = iso(now());
     db.prepare('UPDATE activations SET last_seen_at=? WHERE license_id=? AND device_id=?').run(timestamp, license.id, input.deviceId);
     audit(license.id, 'license.refreshed', { deviceId: input.deviceId });
