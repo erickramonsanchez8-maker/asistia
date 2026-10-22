@@ -156,6 +156,11 @@ async function showRecoveryCode(code, migrated = false) {
     message:migrated?'Se habilitó la recuperación de administrador en esta instalación.':'Configuración completada. Guarda esta clave de recuperación.',
     detail:'CLAVE DE RECUPERACIÓN:\n\n'+code+'\n\nGuárdala fuera de esta computadora. No podremos mostrarla de nuevo. Se necesita junto con el correo del administrador para restablecer la contraseña sin borrar registros.',
     buttons:['Ya la guardé'],defaultId:0,noLink:true});
+  const config=readJson(configPath);
+  if(config && config.recoveryCodePending) {
+    delete config.recoveryCodePending;
+    writeJsonAtomic(configPath,config);
+  }
 }
 async function showRecovery() {
   if (!mainWindow) createWindow();
@@ -207,7 +212,7 @@ ipcMain.handle('asistia:setup', async (_event, input) => {
   const recoveryCode=crypto.randomBytes(12).toString('hex').toUpperCase();
   writeJsonAtomic(configPath, {
     companyName, adminEmail:email, jwtSecret:crypto.randomBytes(48).toString('base64url'),
-    recoveryCodeHash:recoveryCodeHash(recoveryCode), setupAt:new Date().toISOString(),
+    recoveryCodeHash:recoveryCodeHash(recoveryCode), recoveryCodePending:recoveryCode, setupAt:new Date().toISOString(),
     timeZone:Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Mexico_City'
   });
   // Credenciales temporales: se pasan al proceso del backend y el archivo se borra
@@ -260,9 +265,12 @@ if (!gotLock) {
       });
       const config = readJson(configPath);
       if (!config) { await showSetup(); return; }
-      if (!config.recoveryCodeHash) {
+      if (config.recoveryCodePending) {
+        await showRecoveryCode(config.recoveryCodePending,true);
+      } else if (!config.recoveryCodeHash) {
         const recoveryCode=crypto.randomBytes(12).toString('hex').toUpperCase();
         config.recoveryCodeHash=recoveryCodeHash(recoveryCode);
+        config.recoveryCodePending=recoveryCode;
         writeJsonAtomic(configPath,config);
         await showRecoveryCode(recoveryCode,true);
       }
