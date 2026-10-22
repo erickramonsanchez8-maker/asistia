@@ -1,0 +1,21 @@
+{
+  "name": "asistia",
+  "version": "0.3.0",
+  "private": true,
+  "description": "ASISTIA attendance system",
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "backend"
+  ],
+  "scripts": {
+    "start": "npm --workspace backend run start",
+    "dev": "npm --workspace backend run dev",
+    "test": "npm --workspace backend test",
+    "db:check": "npm --workspace backend run db:check",
+    "integrity:check": "npm --workspace backend run integrity:check",
+    "backup:create": "npm --workspace backend run backup:create",
+    "backup:restore": "npm --workspace backend run backup:restore"
+  }
+}
