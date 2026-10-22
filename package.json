@@ -23,7 +23,8 @@
     "files": [
       "desktop/main.cjs",
       "desktop/preload.cjs",
-      "desktop/setup.html",\n      "desktop/recovery.html",
+      "desktop/setup.html",
+      "desktop/recovery.html",
       "desktop/api-client.js",
       "ASISTIA_Control_de_Asistencia.html",
       "package.json",
