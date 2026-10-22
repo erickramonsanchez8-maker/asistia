@@ -1,6 +1,9 @@
 name: ASISTIA Windows installer
 
 on:
+  pull_request:
+    branches:
+      - main
   push:
     branches:
       - feature/desktop-licensing
