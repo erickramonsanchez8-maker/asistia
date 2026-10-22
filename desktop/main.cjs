@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, globalShortcut } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
@@ -150,6 +150,17 @@ async function startBackend() {
   }
 }
 
+function recoveryCodeHash(code) { return crypto.createHash('sha256').update(String(code)).digest('hex'); }
+async function showRecoveryCode(code, migrated = false) {
+  await dialog.showMessageBox({type:'warning',title:'Clave de recuperación de ASISTIA',
+    message:migrated?'Se habilitó la recuperación de administrador en esta instalación.':'Configuración completada. Guarda esta clave de recuperación.',
+    detail:'CLAVE DE RECUPERACIÓN:\n\n'+code+'\n\nGuárdala fuera de esta computadora. No podremos mostrarla de nuevo. Se necesita junto con el correo del administrador para restablecer la contraseña sin borrar registros.',
+    buttons:['Ya la guardé'],defaultId:0,noLink:true});
+}
+async function showRecovery() {
+  if (!mainWindow) createWindow();
+  await mainWindow.loadFile(path.join(app.getAppPath(), 'desktop', 'recovery.html'));
+}
 async function showSetup() {
   const win = createWindow();
   await win.loadFile(path.join(app.getAppPath(), 'desktop', 'setup.html'));
@@ -160,6 +171,26 @@ async function openProduct() {
   await mainWindow.loadFile(path.join(app.getAppPath(), 'ASISTIA_Control_de_Asistencia.html'));
 }
 
+ipcMain.handle('asistia:recovery-back', async () => { await openProduct(); return {ok:true}; });
+ipcMain.handle('asistia:recovery-reset', async (_event, input) => {
+  const config=readJson(configPath);
+  if (!config || !config.recoveryCodeHash) throw new Error('No hay una clave de recuperación configurada.');
+  const code=String(input && input.code || '').trim();
+  const actual=Buffer.from(recoveryCodeHash(code),'hex'), expected=Buffer.from(String(config.recoveryCodeHash),'hex');
+  if(actual.length!==expected.length || !crypto.timingSafeEqual(actual,expected)) throw new Error('La clave de recuperación no es correcta.');
+  const email=String(input && input.email || '').trim().toLowerCase();
+  if(!isValidEmail(email) || email!==String(config.adminEmail || '').toLowerCase()) throw new Error('El correo no coincide con el administrador de este equipo.');
+  const password=String(input && input.password || '');
+  if(password.length<14 || password.length>200) throw new Error('La nueva contraseña debe tener entre 14 y 200 caracteres.');
+  const paths=backendPaths();
+  const child=spawn(paths.executable,['src/recover-admin.js'],{cwd:paths.cwd,env:{...process.env,DATABASE_PATH:path.join(dataDir,'asistia.sqlite')},windowsHide:true,stdio:['pipe','pipe','pipe']});
+  let stdout='',stderr='';
+  child.stdout.on('data',x=>stdout+=x.toString()); child.stderr.on('data',x=>stderr+=x.toString());
+  const exitCode=await new Promise((resolve,reject)=>{child.once('error',reject);child.once('close',resolve);child.stdin.end(JSON.stringify({email,password}));});
+  if(exitCode!==0) throw new Error((stderr||stdout||'No se pudo restablecer la contraseña.').trim());
+  logDiagnostic('INFO','Contraseña de administrador restablecida mediante recuperación local.');
+  return {ok:true,message:(stdout||'Contraseña restablecida.').trim()};
+});
 ipcMain.handle('asistia:setup', async (_event, input) => {
   if (app.isPackaged && fs.existsSync(configPath)) {
     throw new Error('ASISTIA ya está configurado en este equipo.');
@@ -173,18 +204,18 @@ ipcMain.handle('asistia:setup', async (_event, input) => {
   if (password.length > 200) throw new Error('La contraseña es demasiado larga.');
   if (readJson(configPath)) throw new Error('ASISTIA ya está configurado en este equipo.');
 
+  const recoveryCode=crypto.randomBytes(12).toString('hex').toUpperCase();
   writeJsonAtomic(configPath, {
-    companyName,
-    adminEmail: email,
-    jwtSecret: crypto.randomBytes(48).toString('base64url'),
-    setupAt: new Date().toISOString(),
-    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Mexico_City'
+    companyName, adminEmail:email, jwtSecret:crypto.randomBytes(48).toString('base64url'),
+    recoveryCodeHash:recoveryCodeHash(recoveryCode), setupAt:new Date().toISOString(),
+    timeZone:Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Mexico_City'
   });
   // Credenciales temporales: se pasan al proceso del backend y el archivo se borra
   // solo después de confirmar que la API está disponible.
   writeJsonAtomic(bootstrapPath, { email, password });
   try {
     await startBackend();
+    await showRecoveryCode(recoveryCode);
     await openProduct();
     return { ok: true };
   } catch (error) {
@@ -198,6 +229,8 @@ ipcMain.handle('asistia:setup', async (_event, input) => {
     throw new Error((error.message || 'No se pudo iniciar ASISTIA.') + '\n\nRegistro de diagnóstico: ' + logPath);
   }
 });
+
+app.on('will-quit', () => globalShortcut.unregisterAll());
 
 app.on('before-quit', () => {
   if (backendProcess && backendProcess.exitCode === null) {
@@ -221,10 +254,17 @@ if (!gotLock) {
   });
   app.whenReady().then(async () => {
     try {
+      globalShortcut.register('CommandOrControl+Shift+R', async () => {
+        try { if(readJson(configPath)) await showRecovery(); }
+        catch(error) { dialog.showErrorBox('Recuperación de ASISTIA',error.message||'No se pudo abrir la recuperación.'); }
+      });
       const config = readJson(configPath);
-      if (!config) {
-        await showSetup();
-        return;
+      if (!config) { await showSetup(); return; }
+      if (!config.recoveryCodeHash) {
+        const recoveryCode=crypto.randomBytes(12).toString('hex').toUpperCase();
+        config.recoveryCodeHash=recoveryCodeHash(recoveryCode);
+        writeJsonAtomic(configPath,config);
+        await showRecoveryCode(recoveryCode,true);
       }
       await startBackend();
       await openProduct();
