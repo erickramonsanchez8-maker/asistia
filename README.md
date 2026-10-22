@@ -13,6 +13,14 @@ La interfaz heredada y la API **todavía no sincronizan sus historiales automát
 
 Para conocer el alcance, la configuración y los límites del instalador, consulta [ASISTIA para Windows — instalador beta](docs/ASISTIA_DESCARGA_WINDOWS.md) y [arquitectura de escritorio y licencias](docs/ASISTIA_DESKTOP_ARQUITECTURA.md). La arquitectura de escritorio describe componentes y trabajo pendiente; no constituye una promesa de disponibilidad comercial.
 
+## Recuperación local del administrador
+
+En la aplicación de Windows, durante la configuración inicial se muestra una clave de recuperación única. Guárdala en un gestor de contraseñas o fuera del equipo; ASISTIA guarda solo su hash y no puede volver a mostrar la clave.
+
+Para recuperar el acceso, abre ASISTIA y presiona **Ctrl+Shift+R**. Introduce el correo del administrador, la clave de recuperación y una nueva contraseña de al menos 14 caracteres. El proceso actualiza la contraseña de la cuenta administradora en la base de datos local, incrementa la versión de sesión para invalidar tokens anteriores y registra la acción en la bitácora. No elimina empleados ni marcas de asistencia.
+
+En instalaciones anteriores que todavía no tengan una clave, la versión actual genera una al iniciar y la muestra una sola vez. Si se pierde la clave después de guardarla, esta pantalla no permite omitirla; protege el acceso a Windows y los archivos de datos locales.
+
 ## Ejecutar la API
 Requisitos: Node.js 20+.
 

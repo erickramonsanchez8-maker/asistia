@@ -36,6 +36,16 @@ test('acepta licencia firmada vigente y devuelve límites', () => {
   assert.equal(result.companyId, 'company-test-001');
 });
 
+test('la licencia deja de estar activa exactamente al llegar expiresAt', () => {
+  const expiry = '2026-11-01T00:00:00.000Z';
+  const result = verifyLicenseDocument(
+    makeLicense({ expiresAt: expiry }),
+    publicKey,
+    new Date(expiry)
+  );
+  assert.equal(result.status, 'offline_grace');
+});
+
 test('permite estado de gracia solo hasta la fecha firmada', () => {
   const result = verifyLicenseDocument(makeLicense(), publicKey, new Date('2026-11-05T00:00:00Z'));
   assert.equal(result.status, 'offline_grace');
@@ -68,6 +78,12 @@ test('rechaza documentos alterados o firmados con otra clave', () => {
 test('rechaza licencia con campos o límites inválidos aunque esté firmada', () => {
   assert.throws(() => verifyLicenseDocument(makeLicense({ maxEmployees: 0 }), publicKey, new Date('2026-10-18T00:00:00Z')), /límite de empleados/);
   assert.throws(() => verifyLicenseDocument(makeLicense({ status: 'revoked' }), publicKey, new Date('2026-10-18T00:00:00Z')), /no está activa/);
+});
+
+test('reconoce una licencia programada antes de su fecha de inicio', () => {
+  const result = verifyLicenseDocument(makeLicense({ startsAt: '2026-10-25T00:00:00.000Z' }), publicKey, new Date('2026-10-18T00:00:00Z'));
+  assert.equal(result.status, 'scheduled');
+  assert.equal(result.startsAt, '2026-10-25T00:00:00.000Z');
 });
 
 test('rechaza licencia emitida en el futuro y fechas incoherentes', () => {

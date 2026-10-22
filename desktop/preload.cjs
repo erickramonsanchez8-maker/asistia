@@ -7,3 +7,12 @@ contextBridge.exposeInMainWorld('asistiaSetup', Object.freeze({
     password: String(settings && settings.password || '')
   })
 }));
+
+contextBridge.exposeInMainWorld('asistiaRecovery', Object.freeze({
+  reset: (input) => ipcRenderer.invoke('asistia:recovery-reset', {
+    email: String(input && input.email || ''),
+    code: String(input && input.code || ''),
+    password: String(input && input.password || '')
+  }),
+  back: () => ipcRenderer.invoke('asistia:recovery-back')
+}));

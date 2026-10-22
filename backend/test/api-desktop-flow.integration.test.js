@@ -106,7 +106,7 @@ test('flujo integrado: API real + cliente desktop, empleado, marcas y reporte', 
     assert.deepEqual(attendance.events.map(event => event.eventType), ['clock_in', 'clock_out']);
 
     const csv = await client.attendanceCsv({ from, to });
-    assert.match(csv, /numero_empleado,nombre,sucursal/);
+    assert.match(csv, /numero_empleado,nombre,rfc,sucursal/);
     assert.match(csv, /QA-001/);
 
     client.logout();

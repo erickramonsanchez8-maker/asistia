@@ -158,6 +158,10 @@ test('el historial y la exportación siguen accesibles después del vencimiento 
   const status = await request('/api/license/status');
   assert.equal(status.status, 200);
   assert.equal(status.data.status, 'expired');
+  const blockedPunch = await request('/api/attendance/events', { method: 'POST', body: { employeeId, eventType: 'clock_out', source: 'admin' } });
+  assert.equal(blockedPunch.status, 402, JSON.stringify(blockedPunch.data));
+  const blockedEmployee = await request('/api/employees', { method: 'POST', body: { employeeNumber: 'HIST-002', fullName: 'No debe registrarse' } });
+  assert.equal(blockedEmployee.status, 402, JSON.stringify(blockedEmployee.data));
   const events = await request('/api/attendance/events');
   assert.equal(events.status, 200);
   assert.equal(events.data.events.length, 1);

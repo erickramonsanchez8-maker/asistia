@@ -59,6 +59,19 @@ after(async () => {
   if (tempDir) await rm(tempDir, { recursive: true, force: true });
 });
 
+test('sirve el panel administrativo y protege el listado de licencias', async () => {
+  const page = await fetch(baseUrl + '/admin/');
+  assert.equal(page.status, 200);
+  assert.match(page.headers.get('content-type'), /text\/html/i);
+  const html = await page.text();
+  assert.match(html, /Administración de licencias/);
+  const script = await fetch(baseUrl + '/admin/admin.js');
+  assert.equal(script.status, 200);
+  assert.match(script.headers.get('content-type'), /javascript/i);
+  const denied = await request('/v1/admin/licenses');
+  assert.equal(denied.status, 401);
+});
+
 test('no permite emitir licencias sin token administrativo', async () => {
   const result = await request('/v1/admin/licenses', { method: 'POST', body: {
     companyId: 'company-test', planCode: 'basic', maxEmployees: 10, maxDevices: 1, durationDays: 30
@@ -192,4 +205,58 @@ test('protege las operaciones administrativas con el token exacto', async () => 
     body: JSON.stringify({ companyId: 'company-auth-check', planCode: 'basic', maxEmployees: 10, maxDevices: 1, durationDays: 30 })
   });
   assert.equal(wrongToken.status, 401);
+});
+
+test('el panel lista licencias y permite suspender y reactivar con auditoría de estado', async () => {
+  const issued = await request('/v1/admin/licenses', { method: 'POST', admin: true, body: {
+    companyId: 'company-suspend-cycle', planCode: 'standard', maxEmployees: 20, maxDevices: 1, durationDays: 60
+  }});
+  assert.equal(issued.status, 201);
+  const licenseId = issued.data.license.licenseId;
+  const list = await request('/v1/admin/licenses?limit=100&offset=0', { admin: true });
+  assert.equal(list.status, 200);
+  assert.ok(list.data.licenses.some(item => item.licenseId === licenseId && item.status === 'active'));
+
+  const activation = await request('/v1/activate', { method: 'POST', body: {
+    activationCode: issued.data.activationCode, companyId: 'company-suspend-cycle', deviceId: 'device-suspend-0001'
+  }});
+  assert.equal(activation.status, 200);
+
+  const suspended = await request('/v1/admin/licenses/' + licenseId + '/suspend', { method: 'POST', admin: true, body: {} });
+  assert.equal(suspended.status, 200);
+  const deniedRefresh = await request('/v1/licenses/refresh', { method: 'POST', body: {
+    licenseId, deviceId: 'device-suspend-0001', activationSecret: activation.data.activationSecret
+  }});
+  assert.equal(deniedRefresh.status, 403);
+
+  const suspendedList = await request('/v1/admin/licenses?limit=100', { admin: true });
+  assert.equal(suspendedList.data.licenses.find(item => item.licenseId === licenseId).status, 'suspended');
+  const resumed = await request('/v1/admin/licenses/' + licenseId + '/resume', { method: 'POST', admin: true, body: {} });
+  assert.equal(resumed.status, 200);
+  const refreshed = await request('/v1/licenses/refresh', { method: 'POST', body: {
+    licenseId, deviceId: 'device-suspend-0001', activationSecret: activation.data.activationSecret
+  }});
+  assert.equal(refreshed.status, 200);
+});
+
+test('permite programar inicio y vencimiento personalizados y no activar antes del inicio', async () => {
+  const start = new Date(Date.now() + 2 * 86400000);
+  const expiry = new Date(Date.now() + 32 * 86400000);
+  const issued = await request('/v1/admin/licenses', { method: 'POST', admin: true, body: {
+    companyId: 'company-scheduled', planCode: 'scheduled', maxEmployees: 12, maxDevices: 1,
+    startsAt: start.toISOString(), expiresAt: expiry.toISOString()
+  }});
+  assert.equal(issued.status, 201, JSON.stringify(issued.data));
+  assert.equal(issued.data.license.status, 'scheduled');
+  assert.equal(issued.data.license.startsAt, start.toISOString());
+
+  const earlyActivation = await request('/v1/activate', { method: 'POST', body: {
+    activationCode: issued.data.activationCode, companyId: 'company-scheduled', deviceId: 'device-scheduled-0001'
+  }});
+  assert.equal(earlyActivation.status, 402);
+  assert.match(earlyActivation.data.error, /todavía no inicia/i);
+  const laterDate = new Date(Date.now() + 45 * 86400000).toISOString();
+  const renewal = await request('/v1/admin/licenses/' + issued.data.license.licenseId + '/renew', { method: 'POST', admin: true, body: { expiresAt: laterDate } });
+  assert.equal(renewal.status, 200, JSON.stringify(renewal.data));
+  assert.equal(renewal.data.license.expiresAt, laterDate);
 });

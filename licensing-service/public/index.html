@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>ASISTIA · Administración de licencias</title>
+  <link rel="stylesheet" href="/admin/admin.css">
+  <script src="/admin/admin.js" defer></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="top">
+      <div class="brand-mark" aria-hidden="true">A</div>
+      <div><p class="eyebrow">ASISTIA · CONTROL DE ACCESO</p><h1>Administración de licencias</h1><p class="sub">Emisión, renovación y control de vigencias.</p></div>
+      <span class="environment">PANEL PRIVADO</span>
+    </header>
+
+    <section class="panel auth-panel" aria-labelledby="auth-title">
+      <div><h2 id="auth-title">Conexión administrativa</h2><p class="muted">El token solo se mantiene en la memoria de esta pestaña; no se guarda en almacenamiento local.</p></div>
+      <form id="authForm" class="auth-form">
+        <label for="adminToken">Token administrativo</label>
+        <div class="inline"><input id="adminToken" type="password" autocomplete="off" minlength="32" required placeholder="Pega el token privado del servidor"><button class="primary" type="submit">Conectar</button></div>
+      </form>
+      <p id="authStatus" class="status" role="status" aria-live="polite">Desconectado.</p>
+    </section>
+
+    <section id="workspace" hidden>
+      <section class="panel">
+        <div class="section-head"><div><p class="eyebrow">NUEVA LICENCIA</p><h2>Emitir licencia</h2><p class="muted">El código de activación se muestra una sola vez. Entrégalo al cliente por un canal privado.</p></div></div>
+        <form id="issueForm" class="form-grid">
+          <label>Identificador de empresa <input name="companyId" required maxlength="128" placeholder="UUID de empresa de ASISTIA"></label>
+          <label>Plan <input name="planCode" required maxlength="40" pattern="[A-Za-z0-9_-]+" value="standard"></label>
+          <label>Empleados máximos <input name="maxEmployees" type="number" min="1" max="100000" value="25" required></label>
+          <label>Dispositivos máximos <input name="maxDevices" type="number" min="1" max="100" value="1" required></label>
+          <label>Inicio de vigencia <input name="startsAt" type="date" required></label>
+          <label>Fecha de vencimiento <input name="expiresAt" type="date" required></label>
+          <div class="form-action"><button class="primary" type="submit">Emitir licencia</button></div>
+          <p class="muted">Las fechas se interpretan en hora de Jalisco, México (UTC−6). El vencimiento incluye todo ese día.</p>
+        </form>
+        <div id="issuedCode" class="secret-result" hidden><strong>Código de activación · copiar ahora</strong><p>Este código no se volverá a mostrar. Guárdalo de forma segura antes de cerrar esta pantalla.</p><code id="issuedCodeValue"></code><button id="copyCode" class="secondary" type="button">Copiar código</button></div>
+      </section>
+
+      <section class="panel">
+        <div class="section-head list-head"><div><p class="eyebrow">REGISTRO</p><h2>Licencias emitidas</h2><p class="muted">El listado no expone códigos de activación ni secretos de dispositivos.</p></div><button id="refreshList" class="secondary" type="button">Actualizar listado</button></div>
+        <p id="listStatus" class="status" role="status" aria-live="polite">Conéctate para consultar las licencias.</p>
+        <div class="table-wrap"><table><thead><tr><th>Empresa / plan</th><th>Estado</th><th>Vigencia</th><th>Dispositivos</th><th>Acciones</th></tr></thead><tbody id="licenseRows"><tr><td colspan="5" class="empty">No hay datos cargados.</td></tr></tbody></table></div>
+      </section>
+      <footer>La suspensión remota no alcanza instantáneamente a equipos desconectados. Mantén HTTPS, respaldos y acceso administrativo restringido.</footer>
+    </section>
+  </main>
+</body>
+</html>

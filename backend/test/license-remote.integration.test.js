@@ -15,7 +15,7 @@ const activationCodeForTest = 'activation-code-for-integration-test';
 const localStorageKey = randomBytes(32).toString('base64');
 const installationCredential = randomBytes(32).toString('base64url');
 let backendProcess, backendUrl, tempDir, databasePath, authToken, companyId, remoteServer, remoteUrl;
-let signingPrivateKey, signingPublicKey, currentVersion = 1;
+let signingPrivateKey, signingPublicKey, currentVersion = 1, remoteSuspended = false;
 
 async function freePort() {
   const server = createTcpServer();
@@ -58,6 +58,7 @@ before(async () => {
   });
   remoteApp.post('/v1/licenses/refresh', (req, res) => {
     if (req.body.activationSecret !== installationCredential) return res.status(401).json({ error: 'Credencial de activación inválida.' });
+    if (remoteSuspended) return res.status(403).json({ error: 'La licencia está suspendida.' });
     currentVersion = 2;
     res.json({ signedDocument: signedLicense({ companyId }), validatedAt: new Date().toISOString() });
   });
@@ -135,6 +136,18 @@ test('la API local activa, renueva y desactiva usando el servicio remoto', async
   const refreshed = await request('/api/license/refresh', { method: 'POST', body: {} });
   assert.equal(refreshed.status, 200, JSON.stringify(refreshed.data));
   assert.equal(refreshed.data.license.licenseVersion, 2);
+
+  remoteSuspended = true;
+  const suspendedRefresh = await request('/api/license/refresh', { method: 'POST', body: {} });
+  assert.equal(suspendedRefresh.status, 403);
+  const suspendedStatus = await request('/api/license/status');
+  assert.equal(suspendedStatus.data.status, 'suspended');
+  assert.equal(suspendedStatus.data.remoteActivation, true);
+  remoteSuspended = false;
+  const resumedRefresh = await request('/api/license/refresh', { method: 'POST', body: {} });
+  assert.equal(resumedRefresh.status, 200, JSON.stringify(resumedRefresh.data));
+  const resumedStatus = await request('/api/license/status');
+  assert.equal(resumedStatus.data.status, 'active');
 
   const deactivated = await request('/api/license/deactivate', { method: 'POST', body: {} });
   assert.equal(deactivated.status, 200, JSON.stringify(deactivated.data));

@@ -64,17 +64,18 @@ export function verifyLicenseDocument(document, publicKey, now = new Date()) {
   }
 
   const issuedAt = Date.parse(payload.issuedAt);
+  const startsAt = Date.parse(payload.startsAt || payload.issuedAt);
   const expiresAt = Date.parse(payload.expiresAt);
   const offlineGraceUntil = Date.parse(payload.offlineGraceUntil);
   const currentTime = now instanceof Date ? now.getTime() : Date.parse(now);
 
-  if (![issuedAt, expiresAt, offlineGraceUntil, currentTime].every(Number.isFinite)) {
+  if (![issuedAt, startsAt, expiresAt, offlineGraceUntil, currentTime].every(Number.isFinite)) {
     throw new Error('Las fechas de la licencia no son válidas.');
   }
   if (issuedAt > currentTime + 5 * 60 * 1000) {
     throw new Error('La licencia parece emitida en el futuro.');
   }
-  if (expiresAt < issuedAt || offlineGraceUntil < expiresAt) {
+  if (expiresAt < startsAt || offlineGraceUntil < expiresAt) {
     throw new Error('La vigencia de la licencia no es coherente.');
   }
   if (payload.status !== 'active') {
@@ -82,7 +83,8 @@ export function verifyLicenseDocument(document, publicKey, now = new Date()) {
   }
 
   let state = 'active';
-  if (currentTime > expiresAt && currentTime <= offlineGraceUntil) state = 'offline_grace';
+  if (currentTime < startsAt) state = 'scheduled';
+  else if (currentTime >= expiresAt && currentTime <= offlineGraceUntil) state = 'offline_grace';
   if (currentTime > offlineGraceUntil) state = 'expired';
 
   return Object.freeze({
@@ -91,6 +93,7 @@ export function verifyLicenseDocument(document, publicKey, now = new Date()) {
     planCode: payload.planCode,
     status: state,
     issuedAt: new Date(issuedAt).toISOString(),
+    startsAt: new Date(startsAt).toISOString(),
     expiresAt: new Date(expiresAt).toISOString(),
     offlineGraceUntil: new Date(offlineGraceUntil).toISOString(),
     maxEmployees: payload.maxEmployees,
