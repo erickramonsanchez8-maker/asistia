@@ -183,7 +183,7 @@ ipcMain.handle('asistia:recovery-reset', async (_event, input) => {
   const password=String(input && input.password || '');
   if(password.length<14 || password.length>200) throw new Error('La nueva contraseña debe tener entre 14 y 200 caracteres.');
   const paths=backendPaths();
-  const child=spawn(paths.executable,['src/recover-admin.js'],{cwd:paths.cwd,env:{...process.env,DATABASE_PATH:path.join(dataDir,'asistia.sqlite')},windowsHide:true,stdio:['pipe','pipe','pipe']});
+  const child=spawn(paths.executable,['src/recover-admin.js'],{cwd:paths.cwd,env:{...process.env,...(!app.isPackaged?{ELECTRON_RUN_AS_NODE:'1'}:{}),DATABASE_PATH:path.join(dataDir,'asistia.sqlite')},windowsHide:true,stdio:['pipe','pipe','pipe']});
   let stdout='',stderr='';
   child.stdout.on('data',x=>stdout+=x.toString()); child.stderr.on('data',x=>stderr+=x.toString());
   const exitCode=await new Promise((resolve,reject)=>{child.once('error',reject);child.once('close',resolve);child.stdin.end(JSON.stringify({email,password}));});
