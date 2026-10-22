@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'">
+<title>Recuperar acceso | ASISTIA</title>
+<style>
+:root{color-scheme:light;--navy:#0b1f3a;--teal:#1aa6b7;--ink:#142033;--muted:#5b6b80;--line:#d7e0ec;--bg:#f4f7fb;--red:#b42318}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:22px;font:16px/1.5 "Segoe UI",system-ui,sans-serif;background:linear-gradient(140deg,#071526,#0b1f3a 60%,#12324f)}
+main{width:min(520px,100%);background:#fff;border-radius:22px;padding:32px;box-shadow:0 28px 90px #0005}h1{margin:0 0 8px;color:var(--navy);font-size:27px}p{color:var(--muted);font-size:14px}.warning{background:#fff4d6;border:1px solid #f1d48a;padding:12px;border-radius:10px;color:#765500;font-size:13px}.field{display:grid;gap:6px;margin:16px 0}.field label{font-weight:700;color:var(--navy);font-size:14px}input{width:100%;border:1px solid var(--line);border-radius:10px;padding:12px;font:inherit}input:focus{outline:3px solid #1aa6b71c;border-color:var(--teal)}button{width:100%;border:0;border-radius:11px;padding:13px;background:linear-gradient(180deg,#1db4c6,#148a98);color:#fff;font-weight:800;cursor:pointer}button:disabled{opacity:.6}.message{min-height:22px;color:var(--red);font-size:13px}.back{margin-top:10px;background:#edf2f7;color:var(--navy)}
+</style></head><body><main><h1>Recuperar acceso de administrador</h1>
+<p>Restablece la contraseña localmente. No se borran empleados ni asistencias. Por seguridad, las sesiones abiertas quedarán invalidadas.</p>
+<div class="warning">Necesitas la clave de recuperación que ASISTIA muestra al configurar el equipo. Guárdala fuera de esta computadora.</div>
+<form id="form">
+<div class="field"><label for="email">Correo del administrador</label><input id="email" type="email" required autocomplete="username" maxlength="254"></div>
+<div class="field"><label for="code">Clave de recuperación</label><input id="code" type="password" required autocomplete="off" maxlength="100"></div>
+<div class="field"><label for="password">Nueva contraseña (mínimo 14 caracteres)</label><input id="password" type="password" required minlength="14" maxlength="200" autocomplete="new-password"></div>
+<div class="field"><label for="confirm">Confirmar nueva contraseña</label><input id="confirm" type="password" required minlength="14" maxlength="200" autocomplete="new-password"></div>
+<button id="submit" type="submit">Restablecer contraseña</button><p class="message" id="message" role="alert" aria-live="polite"></p>
+</form><button class="back" id="back" type="button">Volver a ASISTIA</button></main>
+<script>
+const form=document.getElementById('form'),button=document.getElementById('submit'),message=document.getElementById('message');
+form.addEventListener('submit',async e=>{e.preventDefault();message.textContent='';const password=document.getElementById('password').value,confirm=document.getElementById('confirm').value;if(password!==confirm){message.textContent='Las contraseñas no coinciden.';return;}button.disabled=true;button.textContent='Verificando y restableciendo…';try{const result=await window.asistiaRecovery.reset({email:document.getElementById('email').value,code:document.getElementById('code').value,password});message.style.color='#147a4c';message.textContent=result.message;form.reset();}catch(err){message.textContent=err?.message||'No se pudo recuperar el acceso.';}finally{button.disabled=false;button.textContent='Restablecer contraseña';}});
+document.getElementById('back').addEventListener('click',()=>window.asistiaRecovery.back());
+</script></body></html>

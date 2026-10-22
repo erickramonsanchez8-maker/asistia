@@ -256,6 +256,7 @@ input,select,textarea{transition:border-color .18s,box-shadow .18s,background .1
 <div class="toast-wrap" id="toasts"></div>
 <div class="print-root" id="printRoot"></div>
 <div id="busy" class="busy hidden" role="status" aria-live="polite"><div class="busy-box">Un momento…</div></div>
+<script src="./desktop/api-client.js"></script>
 <script>
 (function(){
 "use strict";
@@ -1337,7 +1338,8 @@ const NAV = [
   ["settings","Configuración"],
   ["backup","Respaldos y recuperación"],
   ["audit","Auditoría"],
-  ["compliance","Cumplimiento LFT"]
+  ["compliance","Cumplimiento LFT"],
+  ["api","Conexión con API (beta)"]
 ];
 
 function renderAdmin(){
@@ -1390,8 +1392,144 @@ function renderSection(){
     case "backup": return viewBackup();
     case "audit": return viewAudit();
     case "compliance": return viewCompliance();
+    case "api": return viewApiConnection();
     default: return "";
   }
+}
+
+function viewApiConnection(){
+  const ready = !!(window.ASISTIAApiClient && window.ASISTIAApiClient.createClient);
+  const session = window.__asistiaApiClient;
+  const user = session && session.currentUser;
+  return `<section class="section-head"><div><p class="eyebrow">INTEGRACIÓN · FASE 1</p><h2>Conexión con ASISTIA API</h2><p class="muted">Diagnóstico del backend y consulta de datos del servidor. Esta pantalla todavía no sincroniza ni modifica los registros locales de este archivo.</p></div></section>
+    <div class="grid two-col">
+      <article class="card"><h3>Servidor local</h3><div class="field"><label for="apiBaseUrl">URL de la API</label><input id="apiBaseUrl" type="url" value="http://127.0.0.1:3000" placeholder="http://127.0.0.1:3000"><small class="hint">HTTP solo se permite para localhost. Un servidor remoto debe usar HTTPS.</small></div><button class="btn btn-primary" id="apiTestBtn" ${ready?"":"disabled"}>Probar conexión</button><p id="apiConnectionResult" class="hint" role="status" aria-live="polite">${ready?"Sin comprobar.":"No se cargó desktop/api-client.js. Abre el proyecto conservando la carpeta desktop."}</p></article>
+      <article class="card"><h3>Acceso al servidor</h3><form id="apiLoginForm"><div class="field"><label for="apiEmail">Correo de usuario de la API</label><input id="apiEmail" type="email" autocomplete="username" required></div><div class="field"><label for="apiPassword">Contraseña</label><input id="apiPassword" type="password" autocomplete="current-password" required></div><button class="btn btn-primary" type="submit" ${ready?"":"disabled"}>Iniciar sesión en API</button> <button class="btn btn-ghost" type="button" id="apiLogoutBtn">Cerrar sesión API</button></form><p id="apiAuthResult" class="hint" role="status" aria-live="polite">${user?"Sesión de API activa: "+escapeHtml(user.name||user.email||user.role):"No has iniciado sesión en la API."}</p></article>
+    </div>
+    <div class="grid two-col" style="margin-top:16px"><article class="card"><h3>Alta de empleado en API</h3><p class="muted">Crea un registro exclusivamente en la base del servidor. No modifica la lista local del archivo.</p><form id="apiEmployeeForm"><div class="field"><label for="apiEmployeeNumber">Número de empleado *</label><input id="apiEmployeeNumber" type="text" maxlength="40" required></div><div class="field"><label for="apiEmployeeName">Nombre completo *</label><input id="apiEmployeeName" type="text" maxlength="160" required></div><div class="field"><label for="apiEmployeeEmail">Correo (opcional)</label><input id="apiEmployeeEmail" type="email" maxlength="254"></div><div class="field"><label for="apiEmployeeRfc">RFC (opcional)</label><input id="apiEmployeeRfc" type="text" maxlength="13" autocomplete="off"></div><div class="field"><label for="apiEmployeeBranch">Sucursal</label><input id="apiEmployeeBranch" type="text" maxlength="100" value="Principal" required></div><button class="btn btn-primary" id="apiCreateEmployeeBtn" type="submit" ${user && ["admin","supervisor"].includes(user.role)?"":"disabled"}>Crear empleado en API</button><p id="apiEmployeeResult" class="hint" role="status" aria-live="polite">No se ha enviado ningún cambio.</p></form></article><article class="card"><h3>Datos del servidor</h3><p class="muted">Las consultas requieren iniciar sesión en la API. No cambian los datos locales.</p><form id="apiActivateLicenseForm" class="field" style="margin:12px 0"><label for="apiActivationCode">Activar o renovar licencia</label><div class="actions"><input id="apiActivationCode" type="password" autocomplete="off" minlength="20" maxlength="128" placeholder="Código de activación del proveedor" style="flex:1;min-width:220px" required><button class="btn btn-primary" id="apiActivateLicenseBtn" type="submit" disabled>Activar licencia</button></div><p class="hint">Disponible para el administrador de la empresa. El código se envía a la API configurada y no se guarda en el navegador.</p></form><div class="actions"><button class="btn btn-ghost" id="apiCompanyBtn" ${user && user.role==="admin"?"":"disabled"}>Consultar ID de empresa</button><button class="btn btn-ghost" id="apiEmployeesBtn" ${user?"":"disabled"}>Consultar empleados</button><button class="btn btn-ghost" id="apiLicenseBtn" ${user && user.role==="admin"?"":"disabled"}>Consultar licencia</button><button class="btn btn-ghost" id="apiRefreshLicenseBtn" ${user && user.role==="admin"?"":"disabled"}>Sincronizar / renovar licencia</button></div><pre id="apiDataResult" class="code-block" style="white-space:pre-wrap;overflow-wrap:anywhere">Aquí aparecerán los resultados de consulta.</pre><hr style="margin:18px 0;border:0;border-top:1px solid var(--line)"><h3>Registrar asistencia · en línea</h3><p class="muted">Registra directamente en la API. Requiere conexión y confirmación; todavía no tiene cola offline ni sincronización automática.</p><div class="field"><label for="apiPunchEmployee">Empleado activo</label><select id="apiPunchEmployee" disabled><option value="">Primero consulta empleados</option></select></div><div class="actions"><button class="btn btn-primary" id="apiClockInBtn" type="button" disabled>Registrar entrada</button><button class="btn btn-ghost" id="apiClockOutBtn" type="button" disabled>Registrar salida</button></div><p id="apiPunchResult" class="hint" role="status" aria-live="polite">No se ha registrado ninguna marca desde este panel.</p></article><article class="card"><h3>Importante</h3><ul><li>El inicio de sesión de esta API es independiente del administrador local de este archivo.</li><li>La contraseña no se guarda. El token de API vive solo en memoria y se elimina al cerrar sesión o si vence.</li><li>No se importan empleados ni asistencias automáticamente; primero habrá que revisar duplicados, permisos y respaldos.</li></ul></article></div>`;
+}
+
+function bindApiSection(){
+  const $ = id => document.getElementById(id);
+  const result = $("apiConnectionResult");
+  const authResult = $("apiAuthResult");
+  const dataResult = $("apiDataResult");
+  const ready = !!(window.ASISTIAApiClient && window.ASISTIAApiClient.createClient);
+  const getClient = () => {
+    if(!ready) throw new Error("No se cargó desktop/api-client.js. Conserva la carpeta desktop junto al HTML.");
+    const url = $("apiBaseUrl").value.trim();
+    if(!window.__asistiaApiClient || window.__asistiaApiClient.baseUrl !== window.ASISTIAApiClient.normalizeBaseUrl(url)){
+      window.__asistiaApiClient = window.ASISTIAApiClient.createClient({baseUrl:url});
+    }
+    return window.__asistiaApiClient;
+  };
+  if($("apiTestBtn")) $("apiTestBtn").onclick = async ()=>{
+    result.textContent = "Conectando…";
+    try{ const data = await getClient().health(); result.textContent = "Conexión correcta · "+(data.service||"ASISTIA API")+" · "+(data.status||"disponible"); }
+    catch(e){ result.textContent = e.message; }
+  };
+  if($("apiLoginForm")) $("apiLoginForm").onsubmit = async e=>{
+    e.preventDefault(); authResult.textContent = "Validando credenciales…";
+    try{
+      const session = await getClient().login($("apiEmail").value,$("apiPassword").value);
+      $("apiPassword").value = "";
+      authResult.textContent = "Sesión API activa: "+(session.user.name||session.user.email||session.user.role)+" · token temporal en memoria.";
+      bindApiSection();
+      // Revisar el vencimiento al iniciar cada sesión. La API sigue siendo la autoridad
+      // y bloquea escrituras aunque el usuario cierre este aviso.
+      if(session.user.role === "admin"){
+        try{
+          let licenseState = await getClient().licenseStatus();
+          if(licenseState.remoteActivation){
+            try{
+              await getClient().refreshLicense();
+              licenseState = await getClient().licenseStatus();
+            }catch(refreshError){
+              console.warn("No se pudo sincronizar la licencia con el proveedor; se conserva el estado local verificado.", refreshError);
+              licenseState = await getClient().licenseStatus();
+            }
+          }
+          if(licenseState.showExpiryWarning){
+            window.alert("ASISTIA: tu licencia vence en "+licenseState.daysRemaining+" día(s). Contacta al administrador para renovarla.");
+          } else if(licenseState.historyReadOnly){
+            window.alert("ASISTIA está en modo de consulta: la licencia está vencida, suspendida o no activa. Puedes consultar y exportar el historial, pero no registrar nuevas asistencias.");
+          }
+        }catch(licenseError){
+          console.warn("No se pudo consultar el estado de licencia al iniciar sesión.", licenseError);
+        }
+      }
+    }
+    catch(err){ authResult.textContent = err.message; }
+  };
+  if($("apiLogoutBtn")) $("apiLogoutBtn").onclick = ()=>{ if(window.__asistiaApiClient) window.__asistiaApiClient.logout(); authResult.textContent = "Sesión de API cerrada."; renderAdmin(); };
+  if($("apiEmployeesBtn")) $("apiEmployeesBtn").onclick = async ()=>{ dataResult.textContent = "Consultando…"; try{ const data = await getClient().employees({limit:100,offset:0}); dataResult.textContent = JSON.stringify(data,null,2); const select = $("apiPunchEmployee"); select.replaceChildren(); const active = (data.employees||[]).filter(employee=>employee.active===1 || employee.active===true); if(!active.length){ const option=document.createElement("option"); option.value=""; option.textContent="No hay empleados activos en esta página"; select.append(option); select.disabled=true; } else { for(const employee of active){ const option=document.createElement("option"); option.value=employee.id; option.textContent=(employee.employeeNumber||"")+" · "+(employee.fullName||"Empleado"); select.append(option); } select.disabled=false; } const canPunch=!!(window.__asistiaApiClient && window.__asistiaApiClient.isAuthenticated && active.length); $("apiClockInBtn").disabled=!canPunch; $("apiClockOutBtn").disabled=!canPunch; }catch(err){ dataResult.textContent = err.message; } };
+   if($("apiEmployeeForm")) $("apiEmployeeForm").onsubmit = async e=>{
+     e.preventDefault();
+     const form = $("apiEmployeeForm");
+     const status = $("apiEmployeeResult");
+     const submit = $("apiCreateEmployeeBtn");
+     if(!window.__asistiaApiClient || !window.__asistiaApiClient.isAuthenticated){ status.textContent = "Inicia sesión en la API antes de crear empleados."; return; }
+     const role = window.__asistiaApiClient.currentUser && window.__asistiaApiClient.currentUser.role;
+     if(!["admin","supervisor"].includes(role)){ status.textContent = "Tu cuenta no tiene permisos para crear empleados."; return; }
+     const employee = {employeeNumber:$("apiEmployeeNumber").value.trim(),fullName:$("apiEmployeeName").value.trim(),branch:$("apiEmployeeBranch").value.trim() || "Principal"};
+     const email = $("apiEmployeeEmail").value.trim();
+     const rfc = $("apiEmployeeRfc").value.trim().toUpperCase();
+     if(email) employee.email = email;
+     if(rfc) employee.rfc = rfc;
+     submit.disabled = true; status.textContent = "Guardando en el servidor…";
+     try{
+       const result = await getClient().createEmployee(employee);
+       status.textContent = "Empleado creado en API: "+(result.employee.fullName||employee.fullName)+" · número "+(result.employee.employeeNumber||employee.employeeNumber)+".";
+       form.reset(); $("apiEmployeeBranch").value = "Principal";
+       dataResult.textContent = "Empleado creado correctamente. Pulsa «Consultar empleados» para actualizar el listado.";
+     }catch(err){ status.textContent = err.message; }
+     finally{ submit.disabled = !window.__asistiaApiClient || !window.__asistiaApiClient.isAuthenticated || !["admin","supervisor"].includes((window.__asistiaApiClient.currentUser||{}).role); }
+   };
+  if($("apiCompanyBtn")) $("apiCompanyBtn").onclick = async ()=>{ dataResult.textContent = "Consultando empresa…"; try{ const data = await getClient().company(); dataResult.textContent = JSON.stringify(data.company||data,null,2); }catch(err){ dataResult.textContent = err.message; } };
+  if($("apiRefreshLicenseBtn")) $("apiRefreshLicenseBtn").onclick = async ()=>{ dataResult.textContent = "Sincronizando licencia con el proveedor…"; const button=$("apiRefreshLicenseBtn"); button.disabled=true; try{ const refreshed=await getClient().refreshLicense(); const status=await getClient().licenseStatus(); dataResult.textContent="Licencia sincronizada.\\n"+JSON.stringify({refresh:refreshed,status},null,2); window.alert("ASISTIA: la licencia fue sincronizada con el proveedor."); }catch(err){ dataResult.textContent="No se pudo sincronizar la licencia: "+err.message; }finally{ button.disabled=!(window.__asistiaApiClient&&window.__asistiaApiClient.isAuthenticated&&window.__asistiaApiClient.currentUser&&window.__asistiaApiClient.currentUser.role==="admin"); } };
+  if($("apiLicenseBtn")) $("apiLicenseBtn").onclick = async ()=>{ dataResult.textContent = "Consultando licencia…"; try{ const data = await getClient().licenseStatus(); dataResult.textContent = JSON.stringify(data,null,2); }catch(err){ dataResult.textContent = err.message; } };
+  const activationForm=$("apiActivateLicenseForm");
+  if(activationForm) activationForm.onsubmit=async event=>{
+    event.preventDefault();
+    const code=$("apiActivationCode").value.trim(), button=$("apiActivateLicenseBtn");
+    if(!code) return;
+    if(!window.confirm("¿Enviar el código al servicio de licencias para activar esta empresa?")) return;
+    button.disabled=true; dataResult.textContent="Validando y activando licencia…";
+    try{
+      const result=await getClient().activateLicense(code);
+      $("apiActivationCode").value="";
+      const status=await getClient().licenseStatus();
+      dataResult.textContent="Licencia activada correctamente.\n"+JSON.stringify(status,null,2);
+      window.alert("ASISTIA: licencia activada correctamente.");
+    }catch(err){ dataResult.textContent="No se pudo activar la licencia: "+err.message; }
+    finally{ button.disabled=!(window.__asistiaApiClient&&window.__asistiaApiClient.isAuthenticated&&window.__asistiaApiClient.currentUser&&window.__asistiaApiClient.currentUser.role==="admin"); }
+  };
+   const sendPunch = async eventType=>{
+     const select=$("apiPunchEmployee"), status=$("apiPunchResult");
+     const employeeId=select && select.value;
+     if(!employeeId){ status.textContent="Selecciona un empleado activo."; return; }
+     const employeeName=select.options[select.selectedIndex]?.textContent || "el empleado seleccionado";
+     const action=eventType==="clock_in"?"ENTRADA":"SALIDA";
+     if(!window.confirm("Vas a registrar una "+action+" para "+employeeName+" en la base de la API. Esta acción puede quedar en el historial laboral. ¿Continuar?")) return;
+     $("apiClockInBtn").disabled=true; $("apiClockOutBtn").disabled=true; status.textContent="Enviando marca al servidor…";
+     try{
+       const result=await getClient().punch(employeeId,eventType,"admin");
+       const event=result.event||{};
+       status.textContent=action+" registrada en API: "+(event.occurred_at||event.occurredAt||new Date().toISOString())+".";
+     }catch(err){ status.textContent=err.message; }
+     finally{
+       const enabled=!!(window.__asistiaApiClient && window.__asistiaApiClient.isAuthenticated && select && select.value);
+       $("apiClockInBtn").disabled=!enabled; $("apiClockOutBtn").disabled=!enabled;
+     }
+   };
+   if($("apiClockInBtn")) $("apiClockInBtn").onclick=()=>sendPunch("clock_in");
+   if($("apiClockOutBtn")) $("apiClockOutBtn").onclick=()=>sendPunch("clock_out");
+  if($("apiEmployeesBtn")) $("apiEmployeesBtn").disabled = !(window.__asistiaApiClient && window.__asistiaApiClient.isAuthenticated);
+   if($("apiCreateEmployeeBtn")) $("apiCreateEmployeeBtn").disabled = !(window.__asistiaApiClient && window.__asistiaApiClient.isAuthenticated && window.__asistiaApiClient.currentUser && ["admin","supervisor"].includes(window.__asistiaApiClient.currentUser.role));
+  if($("apiCompanyBtn")) $("apiCompanyBtn").disabled = !(window.__asistiaApiClient && window.__asistiaApiClient.isAuthenticated && window.__asistiaApiClient.currentUser && window.__asistiaApiClient.currentUser.role==="admin");
+  if($("apiRefreshLicenseBtn")) $("apiRefreshLicenseBtn").disabled = !(window.__asistiaApiClient && window.__asistiaApiClient.isAuthenticated && window.__asistiaApiClient.currentUser && window.__asistiaApiClient.currentUser.role==="admin");
+    if($("apiLicenseBtn")) $("apiLicenseBtn").disabled = !(window.__asistiaApiClient && window.__asistiaApiClient.isAuthenticated && window.__asistiaApiClient.currentUser && window.__asistiaApiClient.currentUser.role==="admin");
+  if($("apiActivateLicenseBtn")) $("apiActivateLicenseBtn").disabled = !(window.__asistiaApiClient && window.__asistiaApiClient.isAuthenticated && window.__asistiaApiClient.currentUser && window.__asistiaApiClient.currentUser.role==="admin");
 }
 
 function statsForDate(isoDate){
@@ -2152,6 +2290,7 @@ function viewAudit(){
 }
 
 function bindSection(){
+  if(ui.adminSection==="api") bindApiSection();
   document.querySelectorAll("[data-act]").forEach(b=> b.onclick = ()=>{
     const a = b.dataset.act;
     if(a==="newEmp") openEmpEditor();

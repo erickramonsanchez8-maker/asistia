@@ -3,7 +3,7 @@ on:
   push:
     branches: [main, "feature/**", "fix/**"]
   pull_request:
-    branches: [main]
+    branches: [main, "feature/**"]
 jobs:
   checks:
     runs-on: ubuntu-latest
@@ -18,3 +18,5 @@ jobs:
       - run: npm ci
       - run: npm audit --omit=dev
       - run: npm test
+      - name: Test desktop API client
+        run: node --test ../desktop/api-client.test.cjs
