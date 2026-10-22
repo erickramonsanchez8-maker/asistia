@@ -9,7 +9,7 @@ let input;
 try { input = JSON.parse(raw); } catch { console.error('Solicitud de recuperación inválida.'); process.exit(2); }
 const email = String(input.email || '').trim().toLowerCase();
 const password = String(input.password || '');
-if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) { console.error('Correo inválido.'); process.exit(2); }
+if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { console.error('Correo inválido.'); process.exit(2); }
 if (password.length < 14 || password.length > 200) { console.error('La nueva contraseña debe tener entre 14 y 200 caracteres.'); process.exit(2); }
 const dbPath = resolve(process.env.DATABASE_PATH || './data/asistia.sqlite');
 const db = new Database(dbPath);
