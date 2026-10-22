@@ -1,21 +1,70 @@
 {
-  "name": "asistia",
-  "version": "0.3.0",
+  "name": "asistia-desktop",
+  "version": "0.4.1",
   "private": true,
-  "description": "ASISTIA attendance system",
-  "engines": {
-    "node": ">=20"
-  },
-  "workspaces": [
-    "backend"
-  ],
+  "description": "Aplicación de escritorio para ASISTIA",
+  "main": "desktop/main.cjs",
   "scripts": {
-    "start": "npm --workspace backend run start",
-    "dev": "npm --workspace backend run dev",
-    "test": "npm --workspace backend test",
-    "db:check": "npm --workspace backend run db:check",
-    "integrity:check": "npm --workspace backend run integrity:check",
-    "backup:create": "npm --workspace backend run backup:create",
-    "backup:restore": "npm --workspace backend run backup:restore"
+    "start": "electron .",
+    "dist:win": "electron-builder --win nsis --x64 --publish never"
+  },
+  "devDependencies": {
+    "electron": "^35.7.5",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "mx.asistia.desktop",
+    "productName": "ASISTIA",
+    "asar": true,
+    "afterPack": "desktop/after-pack.cjs",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "desktop/main.cjs",
+      "desktop/preload.cjs",
+      "desktop/setup.html",
+      "desktop/api-client.js",
+      "ASISTIA_Control_de_Asistencia.html",
+      "package.json",
+      "desktop/assets/asistia-logo.png"
+    ],
+    "extraResources": [
+      {
+        "from": "backend",
+        "to": "backend",
+        "filter": [
+          "src/**/*",
+          "package.json",
+          "node_modules/**/*",
+          "runtime/node.exe"
+        ]
+      },
+      {
+        "from": "desktop/assets/asistia-logo.png",
+        "to": "asistia-logo.png"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "ASISTIA-Setup-${version}-${arch}.${ext}",
+      "icon": "desktop/assets/asistia.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "ASISTIA",
+      "perMachine": false,
+      "deleteAppDataOnUninstall": false
+    }
   }
 }
