@@ -37,6 +37,9 @@ jobs:
       - name: Run API and licensing tests
         run: npm test
         working-directory: backend
+      - name: Validate meal-break modules
+        run: node --check src/meal-breaks.js && node --check src/meal-break-routes.js && node --check src/server.js
+        working-directory: backend
 
       - name: Install licensing service dependencies
         run: npm install --no-audit --no-fund
