@@ -43,7 +43,25 @@ Los intervalos se recortan a los límites de la jornada y se fusionan si se sola
 ## Reglas laborales y producto
 La configuración countsAsWork no debe presentarse como una determinación legal automática. En México, el tratamiento del periodo depende de las condiciones reales de descanso y disponibilidad del trabajador; la empresa debe validar su política con asesoría laboral. La aplicación debe conservar evidencia de la política vigente en la fecha de cada jornada.
 
-## Estado de implementación
-- backend/src/meal-breaks.js: motor puro de cálculo con validación de políticas, recorte y fusión de intervalos.
-- backend/test/meal-breaks.test.js: pruebas unitarias del cálculo manual/automático.
-- Pendiente: integración con SQLite, IPC local, interfaz de administración, UI del trabajador, reportes y migración de datos heredados.
+## Estado de implementación — 2 de noviembre de 2026
+
+### Implementado en la rama de desarrollo
+- `backend/src/meal-breaks.js`: cálculo puro de minutos brutos, descansos y tiempo efectivo; validación estricta de instantes ISO-8601 con offset; recorte y fusión de intervalos.
+- Resolución de `scheduledStart` con zona horaria IANA. Las horas civiles inexistentes por el salto DST se rechazan; en una hora repetida se usa la primera ocurrencia de forma determinista.
+- `backend/src/meal-break-routes.js`: tablas SQLite para política actual, historial de políticas y eventos de comida. Los eventos manuales son append-only y tienen hash encadenado.
+- API: `GET/PUT /api/meal-break/policy`, `POST/GET /api/meal-break/events` y `GET /api/attendance/effective?employeeId=...`.
+- El historial de políticas conserva la vigencia de cada configuración; un cambio de política no debe recalcular jornadas anteriores con la regla nueva.
+- `desktop/api-client.js` y `ASISTIA_Control_de_Asistencia.html`: métodos y panel beta para configurar la política, registrar salida/regreso y consultar horas efectivas.
+- Pruebas agregadas para modos manual/automático, intervalos superpuestos, DST, instantes inválidos, políticas históricas y descansos incompletos.
+- Dependencias auditadas: body-parser actualizado a 1.20.9 y Zod a 4.6.7; la validación CI posterior a estos cambios sigue pendiente.
+
+### Limitaciones que permanecen
+- Esta integración de comida usa la API local heredada. **No elimina Express, el proceso Node ni el puerto localhost.**
+- No está implementado todavía el acceso directo Electron Main → servicios SQLite mediante IPC.
+- La política actual es por empresa; no hay todavía overrides por empleado, sucursal o turno.
+- La pantalla beta se conecta a la API; todavía no es una sección nativa del panel local ni una experiencia completa para el trabajador.
+- El resumen efectivo se consulta por empleado y aún no está incorporado al CSV/PDF ni a todos los reportes.
+- La verificación de integridad existente todavía debe ampliarse para validar la cadena de eventos de comida.
+- La migración de `localStorage` a SQLite, reconciliación de duplicados, cola offline, respaldos y pruebas de instalación/actualización Windows siguen pendientes.
+
+No retirar el backend HTTP ni el almacenamiento heredado hasta que exista paridad funcional, migración respaldada, conciliación verificable y pruebas de restauración.
