@@ -1,0 +1,48 @@
+name: ASISTIA Windows installer
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "ASISTIA_Control_de_Asistencia.html"
+      - "package.json"
+      - "backend/**"
+      - "desktop/**"
+      - ".github/workflows/windows-installer.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install Electron build dependencies
+        run: npm install
+      - name: Install local backend dependencies
+        run: npm ci --omit=dev
+        working-directory: backend
+      - name: Bundle Node.js runtime for the local API
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force backend/runtime | Out-Null
+          $nodePath = (Get-Command node).Source
+          Copy-Item $nodePath backend/runtime/node.exe -Force
+          if (!(Test-Path backend/runtime/node.exe)) { throw "No se pudo copiar node.exe" }
+      - name: Build Windows NSIS installer
+        run: npm run dist:win
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ASISTIA-Setup-v0.5.0-x64
+          path: release/*.exe
+          if-no-files-found: error
+          retention-days: 30
