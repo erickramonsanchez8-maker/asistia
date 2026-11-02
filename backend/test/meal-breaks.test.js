@@ -4,7 +4,7 @@ import { calculateEffectiveMinutes, resolveAutomaticBreak, resolveLocalDateTime,
 import { buildEffectiveShifts } from '../src/meal-break-routes.js';
 
 const manual = { mode: 'manual', durationMinutes: 60, countsAsWork: false };
-const automatic = { mode: 'automatic', durationMinutes: 60, scheduledStart: '14:00', countsAsWork: false };
+const automatic = { mode: 'automatic', durationMinutes: 60, scheduledStart: '14:00', countsAsWork: false, timeZone: 'America/Mexico_City' };
 
 test('manual: descuenta el tiempo real entre salida y regreso', () => {
   const result = calculateEffectiveMinutes({
