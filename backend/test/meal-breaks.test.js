@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateEffectiveMinutes, validatePolicy } from '../src/meal-breaks.js';
+import { calculateEffectiveMinutes, resolveAutomaticBreak, resolveLocalDateTime, validatePolicy } from '../src/meal-breaks.js';
 
 const manual = { mode: 'manual', durationMinutes: 60, countsAsWork: false };
 const automatic = { mode: 'automatic', durationMinutes: 60, scheduledStart: '14:00', countsAsWork: false };
@@ -92,4 +92,51 @@ test('rechaza salida anterior o igual a entrada', () => {
     clockOutAt: '2026-11-02T18:00:00Z',
     policy: manual
   }), /posterior/);
+});
+
+test('automatic: resuelve la hora civil usando la zona horaria del negocio', () => {
+  const resolved = resolveAutomaticBreak({
+    shiftDate: '2026-11-02',
+    timeZone: 'America/Mexico_City',
+    policy: automatic
+  });
+  assert.equal(resolved.startAt, '2026-11-02T20:00:00.000Z');
+  assert.equal(resolved.endAt, '2026-11-02T21:00:00.000Z');
+});
+
+test('rechaza una hora local inexistente durante el salto de horario de verano', () => {
+  assert.throws(() => resolveLocalDateTime({
+    date: '2026-03-08',
+    time: '02:30',
+    timeZone: 'America/New_York'
+  }), /no existe por el cambio de horario/);
+});
+
+test('elige de forma determinista la primera ocurrencia de una hora local repetida', () => {
+  assert.equal(resolveLocalDateTime({
+    date: '2026-11-01',
+    time: '01:30',
+    timeZone: 'America/New_York'
+  }), '2026-11-01T05:30:00.000Z');
+});
+
+test('rechaza instantes sin zona u offset explícito', () => {
+  assert.throws(() => calculateEffectiveMinutes({
+    clockInAt: '2026-11-02T09:00:00',
+    clockOutAt: '2026-11-02T18:00:00Z',
+    policy: manual
+  }), /offset ISO-8601 explícito/);
+});
+
+test('rechaza zonas IANA desconocidas y fechas civiles inválidas', () => {
+  assert.throws(() => resolveLocalDateTime({
+    date: '2026-02-30',
+    time: '14:00',
+    timeZone: 'America/Mexico_City'
+  }), /no existe en el calendario/);
+  assert.throws(() => resolveLocalDateTime({
+    date: '2026-11-02',
+    time: '14:00',
+    timeZone: 'Mars/Olympus'
+  }), /zona horaria IANA no es válida/);
 });
