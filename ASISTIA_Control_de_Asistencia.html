@@ -246,6 +246,15 @@ input,select,textarea{transition:border-color .18s,box-shadow .18s,background .1
   .print-root,.print-root *{visibility:visible}
   .print-root{display:block;position:absolute;inset:0;background:#fff;color:#111}
 }
+
+/* Liquid Glass · ASISTIA Desktop */
+@supports ((backdrop-filter: blur(12px)) or (-webkit-backdrop-filter: blur(12px))){
+.panel,.card,.kpi,.login-card,.setup-card,.modal,.confirm-card{background:rgba(255,255,255,.78);border:1px solid rgba(255,255,255,.72);-webkit-backdrop-filter:blur(18px) saturate(1.28);backdrop-filter:blur(18px) saturate(1.28);box-shadow:0 18px 48px rgba(11,31,58,.10),inset 0 1px 0 rgba(255,255,255,.72)}
+.topbar{background:rgba(8,28,52,.88);-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px)}
+.side{background:rgba(9,33,61,.94);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px)}
+}
+.meal-actions{margin-top:10px;display:grid;gap:4px}.meal-actions .btn{width:100%;border-color:rgba(20,138,152,.35);background:rgba(230,247,249,.78)}.meal-actions .kiosk-note{text-align:center;margin:0}
+.main > *{animation-duration:.18s!important}.nav-btn,.btn,.card,.kpi,.table-wrap{transition-duration:.16s!important}.kiosk,.kiosk:before{animation:none!important}
 </style>
 </head>
 <body>
@@ -473,6 +482,8 @@ function defaultSchedule(){
     workDays: [1,2,3,4,5],
     toleranceMin: 10,
     breakMin: 60,
+    mealMin: 30,
+    mealMax: 90,
     overnight: false,
     byDay: {}
   };
@@ -523,6 +534,12 @@ function loadDb(){
     }
     db = parsed;
     if(!Array.isArray(db.complianceAgreements)) db.complianceAgreements = [];
+    if(!Array.isArray(db.sessions)) db.sessions = [];
+    db.sessions.forEach(s=>{ if(!Array.isArray(s.mealBreaks)) s.mealBreaks = []; });
+    if(Array.isArray(db.schedules)) db.schedules.forEach(s=>{
+      if(!Number.isFinite(+s.mealMin) || +s.mealMin<1) s.mealMin = 30;
+      if(!Number.isFinite(+s.mealMax) || +s.mealMax<1) s.mealMax = 90;
+    });
     if(!db.meta) db.meta = {};
     if(!db.company.backupRemindDays) db.company.backupRemindDays = 7;
     if(db.company && typeof db.company.reportFooter === "string" && /Control de Asistencia Pro/i.test(db.company.reportFooter)){
@@ -729,7 +746,8 @@ function scheduleFor(emp, isoDate){
   const overnight = !!(dayCfg && dayCfg.overnight) || !!sch.overnight || minutesOf(end) <= minutesOf(start);
   return {
     id: sch.id, name: sch.name, start, end, workDays, overnight,
-    toleranceMin: sch.toleranceMin|0, breakMin: sch.breakMin|0, snapshotAt: nowIso()
+    toleranceMin: sch.toleranceMin|0, breakMin: sch.breakMin|0,
+    mealMin: (sch.mealMin|0) || 30, mealMax: (sch.mealMax|0) || 90, snapshotAt: nowIso()
   };
 }
 function isWorkDay(emp, isoDate){
@@ -741,13 +759,23 @@ function isWorkDay(emp, isoDate){
 function openSession(empId){
   return db.sessions.find(s=>s.employeeId===empId && s.clockIn && !s.clockOut);
 }
+function activeMealBreak(s){
+  return s && Array.isArray(s.mealBreaks) ? s.mealBreaks.find(b=>b.mealOutAt && !b.mealInAt) || null : null;
+}
 function sessionDurationMs(s){
   if(!s || !s.clockIn) return 0;
-  const end = s.clockOut ? new Date(s.clockIn) && new Date(s.clockOut) : new Date();
-  let a = new Date(s.clockIn).getTime();
-  let b = (s.clockOut ? new Date(s.clockOut) : new Date()).getTime();
-  if(b < a) b += 24*3600*1000;
-  return Math.max(0, b-a);
+  const start = new Date(s.clockIn).getTime();
+  let end = s.clockOut ? new Date(s.clockOut).getTime() : Date.now();
+  if(end < start) end += 24*3600*1000;
+  let worked = Math.max(0, end-start);
+  (Array.isArray(s.mealBreaks) ? s.mealBreaks : []).forEach(b=>{
+    if(!b.mealOutAt) return;
+    const mealStart = new Date(b.mealOutAt).getTime();
+    let mealEnd = b.mealInAt ? new Date(b.mealInAt).getTime() : Date.now();
+    if(mealEnd < mealStart) mealEnd += 24*3600*1000;
+    worked -= Math.max(0, mealEnd-mealStart);
+  });
+  return Math.max(0, worked);
 }
 function computeLate(s){
   if(!s || !s.clockIn || !s.scheduleSnapshot || !s.scheduleSnapshot.start) return 0;
@@ -759,6 +787,7 @@ function computeLate(s){
 }
 function statusLabel(s){
   if(!s) return {t:"Sin registro", c:"muted"};
+  if(s.clockIn && !s.clockOut && activeMealBreak(s)) return {t:"En comida", c:"warn"};
   if(s.clockIn && !s.clockOut) return {t:"En jornada", c:"info"};
   if(s.clockIn && s.clockOut) return {t:"Jornada completa", c:"ok"};
   return {t:"Incompleta", c:"warn"};
@@ -792,7 +821,10 @@ function searchEmployees(q){
 function actionFor(emp){
   if(!emp) return {type:"none", label:"Identifique al empleado", next:"Escriba su nombre y selecciónelo de la lista."};
   const open = openSession(emp.id);
-  if(open) return {type:"out", label:"Registrar salida", next:"Se registrará la salida y se cerrará la jornada abierta."};
+  if(open){
+    if(activeMealBreak(open)) return {type:"meal_in", label:"Registrar regreso de comida", next:"Se cerrará la pausa y se calculará su duración real."};
+    return {type:"out", label:"Registrar salida", next:"Se registrará la salida y se cerrará la jornada abierta."};
+  }
   const today = todayIso();
   const closedToday = db.sessions.find(s=>s.employeeId===emp.id && s.operationalDate===today && s.clockIn && s.clockOut);
   if(closedToday && !scheduleFor(emp,today).overnight){
@@ -827,6 +859,7 @@ function evaluateAfterPunch(s){
     const planned = minutesOf(sch.end) - minutesOf(sch.start);
     let plannedMin = planned;
     if(sch.overnight || planned<=0) plannedMin = planned + 24*60;
+    plannedMin = Math.max(0, plannedMin - Math.max(0, sch.breakMin|0));
     const durMin = Math.round(sessionDurationMs(s)/60000);
     if(plannedMin>0 && durMin > plannedMin + 30){
       addIncident("overtime", s.employeeId, s.id, "La jornada registrada excede la duración configurada ("+durMin+" min). No implica horas extra autorizadas.");
@@ -852,6 +885,22 @@ async function punch(emp, pin){
   if(act.type==="done") return {ok:false, error:"La jornada de hoy ya está cerrada. No se creó un registro duplicado."};
   if(act.type==="none") return {ok:false, error:"Seleccione un empleado válido."};
   ui.lastPunchAt = now;
+  if(act.type==="meal_in"){
+    const open = openSession(emp.id);
+    const meal = activeMealBreak(open);
+    if(!open || !meal) return {ok:false, error:"No hay una pausa de comida pendiente de regreso."};
+    const inAt = nowIso();
+    if(new Date(inAt) < new Date(meal.mealOutAt)) return {ok:false, error:"La hora de regreso no puede ser anterior a la salida a comida."};
+    meal.mealInAt = inAt;
+    meal.durationMs = Math.max(0, new Date(inAt)-new Date(meal.mealOutAt));
+    const min = open.scheduleSnapshot && open.scheduleSnapshot.mealMin || 30;
+    const max = open.scheduleSnapshot && open.scheduleSnapshot.mealMax || 90;
+    meal.rangeStatus = meal.durationMs < min*60000 ? "below" : meal.durationMs > max*60000 ? "above" : "within";
+    audit("regreso_comida", employeeName(emp)+" · "+durationLabel(meal.durationMs));
+    const saved = saveDb();
+    if(!saved){ meal.mealInAt=null; meal.durationMs=null; meal.rangeStatus=null; return {ok:false,error:"No se pudo guardar el regreso de comida."}; }
+    return {ok:true,type:"meal_in",name:employeeName(emp),time:formatTimeSec(inAt),duration:durationLabel(meal.durationMs),rangeStatus:meal.rangeStatus};
+  }
   const z = zoned(new Date());
   if(act.type==="in"){
     let operationalDate = z.date;
@@ -1151,6 +1200,9 @@ function renderKiosk(){
           </div>
           <div id="personBox">${person}</div>
           <button class="btn btn-lg ${act.type==="out"?"btn-navy":"btn-primary"}" id="punchBtn" ${!emp||act.type==="done"||act.type==="none"?"disabled":""}>${escapeHtml(act.label)}</button>
+          <div id="mealActions">${emp && openSession(emp.id) && !(openSession(emp.id).mealBreaks||[]).length ? `
+            <button class="btn btn-lg btn-ghost" id="mealOutBtn" type="button">Registrar salida a comida</button>
+            <p class="kiosk-note">La duración se mide automáticamente al registrar el regreso. Rango orientativo: ${(openSession(emp.id).scheduleSnapshot.mealMin||30)}–${(openSession(emp.id).scheduleSnapshot.mealMax||90)} min.</p>` : ""}</div>
           <p class="kiosk-note">${emp?escapeHtml(act.next):(db.company.idMethod==="name" ? "Aviso de seguridad: sin PIN, otra persona podría registrar asistencia a su nombre. El patrón puede exigir PIN en Configuración." : "Seleccione su ficha. Si tiene PIN, escríbalo antes de registrar.")}</p>
         </div>
       </div>
@@ -1172,9 +1224,14 @@ function renderPersonInfo(emp, act){
   const todayS = db.sessions.find(s=>s.employeeId===emp.id && s.operationalDate===z.date) || open;
   const st = statusLabel(todayS);
   const elapsed = open ? durationLabel(sessionDurationMs(open)) : (todayS && todayS.clockOut ? durationLabel(sessionDurationMs(todayS)) : "—");
+  const meal = open ? activeMealBreak(open) : null;
+  const completedMeal = open && Array.isArray(open.mealBreaks) ? open.mealBreaks.find(b=>b.mealInAt) : null;
+  const mealInfo = meal ? "En comida desde "+formatTime(meal.mealOutAt)
+    : completedMeal ? "Comida: "+durationLabel(completedMeal.durationMs) : "Comida: pendiente u opcional";
   return `<strong>${escapeHtml(employeeName(emp))}</strong>
     <div class="meta">${escapeHtml(emp.position||"Sin puesto")} · ${escapeHtml(emp.department||"Sin departamento")}${emp.employeeNumber?" · Nº "+escapeHtml(emp.employeeNumber):""}</div>
-    <div class="meta">Fecha: ${formatDateShort(z.date)} · Entrada: ${todayS?formatTime(todayS.clockIn):"—"} · Salida: ${todayS&&todayS.clockOut?formatTime(todayS.clockOut):"—"} · Tiempo: ${elapsed}</div>
+    <div class="meta">Fecha: ${formatDateShort(z.date)} · Entrada: ${todayS?formatTime(todayS.clockIn):"—"} · Salida: ${todayS&&todayS.clockOut?formatTime(todayS.clockOut):"—"} · Tiempo efectivo: ${elapsed}</div>
+    <div class="meta">${escapeHtml(mealInfo)}</div>
     <div style="margin-top:8px"><span class="badge badge-${st.c}">${st.t}</span>${pinNeeded(emp)?' <span class="badge badge-info">PIN requerido</span>':''}</div>`;
 }
 
@@ -1216,6 +1273,8 @@ function wireKiosk(){
     if(e.key==="Escape"){ input.value=""; ui.query=""; ui.selectedEmployeeId=null; box.classList.add("hidden"); renderKiosk(); }
   });
   document.getElementById("punchBtn").onclick = onPunch;
+  const mealOutBtn = document.getElementById("mealOutBtn");
+  if(mealOutBtn) mealOutBtn.onclick = onMealOut;
   document.getElementById("personBox").addEventListener("keydown", (e)=>{
     if(e.key==="Enter" && e.target && e.target.id==="kioskPin"){ e.preventDefault(); onPunch(); }
   });
@@ -1252,13 +1311,44 @@ async function onPunch(){
   if(!res.ok){ toast(res.error||"No se registró.","err"); return; }
   showPunchSuccess(res);
 }
+async function onMealOut(){
+  const emp = empById(ui.selectedEmployeeId);
+  if(!emp) return;
+  let pin = (document.getElementById("kioskPin")||{}).value || "";
+  const need = pinNeeded(emp);
+  if(need && emp.pinHash){
+    if(!pin){
+      const r = await promptBox("Confirme su PIN", `<div class="field"><label>PIN de ${escapeHtml(employeeName(emp))}</label><input name="pin" type="password" inputmode="numeric" required></div>`);
+      if(!r) return;
+      pin = r.pin;
+    }
+    const valid = await verifySecret(pin,emp.pinHash,emp.pinSalt);
+    if(!valid){ toast("PIN incorrecto. No se registró la salida a comida.","err"); return; }
+  } else if(need && !emp.pinHash){
+    toast("Este empleado aún no tiene PIN. El administrador debe asignarlo.","err");
+    return;
+  }
+  const session = openSession(emp.id);
+  if(!session){ toast("Primero debe registrar su entrada.","err"); return; }
+  if((session.mealBreaks||[]).length){ toast("La pausa de comida de esta jornada ya fue registrada.","err"); return; }
+  const event = {id:uid("meal"),mealOutAt:nowIso(),mealInAt:null,durationMs:null};
+  session.mealBreaks = session.mealBreaks || [];
+  session.mealBreaks.push(event);
+  audit("salida_comida",employeeName(emp)+" · "+formatTime(event.mealOutAt));
+  if(!saveDb()){ session.mealBreaks.pop(); return; }
+  showPunchSuccess({ok:true,type:"meal_out",name:employeeName(emp),time:formatTimeSec(event.mealOutAt)});
+}
 function showPunchSuccess(res){
-  const msgIn = `${res.greet}, ${res.name}. Tu jornada comienza ahora. Hoy es una nueva oportunidad para dar lo mejor de ti. Entrada registrada correctamente a las ${res.time}`;
-  const msgOut = `¡${res.greet}, ${res.name}! Tu salida quedó registrada a las ${res.time} ${closingWish(res.hour||12)} Duración: ${res.duration}.`;
+  const msgIn = `${res.greet}, ${res.name}. Tu jornada comienza ahora. Entrada registrada correctamente a las ${res.time}.`;
+  const msgOut = `¡${res.greet}, ${res.name}! Tu salida quedó registrada a las ${res.time}. ${closingWish(res.hour||12)} Duración efectiva: ${res.duration}.`;
+  const msgMealOut = `${res.name}, registramos tu salida a comida a las ${res.time}. Al regresar, pulsa “Registrar regreso de comida”; el sistema medirá el tiempo real.`;
+  const msgMealIn = `${res.name}, regreso de comida registrado a las ${res.time}. Duración de la pausa: ${res.duration}. El tiempo efectivo de trabajo ya descuenta esta pausa.`;
+  const title = res.type==="in" ? "Entrada guardada" : res.type==="meal_out" ? "Salida a comida guardada" : res.type==="meal_in" ? "Regreso de comida guardado" : "Salida guardada";
+  const message = res.type==="in" ? msgIn : res.type==="meal_out" ? msgMealOut : res.type==="meal_in" ? msgMealIn : msgOut;
   document.getElementById("modalRoot").innerHTML = `<div class="confirm-layer"><div class="confirm-card ok">
     <div class="check-anim">✓</div>
-    <h3>${res.type==="in"?"Entrada guardada":"Salida guardada"}</h3>
-    <p>${escapeHtml(res.type==="in"?msgIn:msgOut)}</p>
+    <h3>${title}</h3>
+    <p>${escapeHtml(message)}</p>
     <button class="btn btn-primary" id="okPunch">Listo</button>
   </div></div>`;
   document.getElementById("okPunch").onclick = ()=>{
@@ -1271,6 +1361,7 @@ function showHelp(){
   modal(`<h3>Cómo registrar asistencia</h3>
     <ol>
       <li><b>Entrada:</b> escriba su nombre, selecciónese y pulse Registrar entrada.</li>
+      <li><b>Comida:</b> durante la jornada puede marcar “Registrar salida a comida” y, al volver, “Registrar regreso de comida”. La duración se descuenta del tiempo efectivo y puede variar.</li>
       <li><b>Salida:</b> vuelva a identificarse. Si tiene una jornada abierta, el botón cambiará a Registrar salida.</li>
       <li><b>Error:</b> no edite sus horas. Avise a su supervisor para una corrección autorizada.</li>
       <li><b>No aparece su nombre:</b> verifique la ortografía o pida que lo den de alta y lo dejen activo.</li>
@@ -2484,5 +2575,6 @@ try{
 render();
 })();
 </script>
+<script src="./desktop/desktop-enhancements.js"></script>
 </body>
 </html>
