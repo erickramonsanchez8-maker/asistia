@@ -1,8 +1,8 @@
 {
   "name": "asistia-desktop",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "private": true,
-  "description": "Aplicación de escritorio para ASISTIA",
+  "description": "ASISTIA · Control local de asistencia para Windows",
   "main": "desktop/main.cjs",
   "scripts": {
     "start": "electron .",
@@ -16,18 +16,15 @@
     "appId": "mx.asistia.desktop",
     "productName": "ASISTIA",
     "asar": true,
-    "afterPack": "desktop/after-pack.cjs",
     "directories": {
       "output": "release"
     },
     "files": [
       "desktop/main.cjs",
       "desktop/preload.cjs",
-      "desktop/setup.html",
-      "desktop/api-client.js",
+      "desktop/desktop-enhancements.js",
       "ASISTIA_Control_de_Asistencia.html",
-      "package.json",
-      "desktop/assets/asistia-logo.png"
+      "package.json"
     ],
     "extraResources": [
       {
@@ -39,10 +36,6 @@
           "node_modules/**/*",
           "runtime/node.exe"
         ]
-      },
-      {
-        "from": "desktop/assets/asistia-logo.png",
-        "to": "asistia-logo.png"
       }
     ],
     "win": {
@@ -54,8 +47,7 @@
           ]
         }
       ],
-      "artifactName": "ASISTIA-Setup-${version}-${arch}.${ext}",
-      "icon": "desktop/assets/asistia.ico"
+      "artifactName": "ASISTIA-Setup-${version}-${arch}.${ext}"
     },
     "nsis": {
       "oneClick": false,
