@@ -1406,7 +1406,27 @@ function viewApiConnection(){
       <article class="card"><h3>Servidor local</h3><div class="field"><label for="apiBaseUrl">URL de la API</label><input id="apiBaseUrl" type="url" value="http://127.0.0.1:3000" placeholder="http://127.0.0.1:3000"><small class="hint">HTTP solo se permite para localhost. Un servidor remoto debe usar HTTPS.</small></div><button class="btn btn-primary" id="apiTestBtn" ${ready?"":"disabled"}>Probar conexión</button><p id="apiConnectionResult" class="hint" role="status" aria-live="polite">${ready?"Sin comprobar.":"No se cargó desktop/api-client.js. Abre el proyecto conservando la carpeta desktop."}</p></article>
       <article class="card"><h3>Acceso al servidor</h3><form id="apiLoginForm"><div class="field"><label for="apiEmail">Correo de usuario de la API</label><input id="apiEmail" type="email" autocomplete="username" required></div><div class="field"><label for="apiPassword">Contraseña</label><input id="apiPassword" type="password" autocomplete="current-password" required></div><button class="btn btn-primary" type="submit" ${ready?"":"disabled"}>Iniciar sesión en API</button> <button class="btn btn-ghost" type="button" id="apiLogoutBtn">Cerrar sesión API</button></form><p id="apiAuthResult" class="hint" role="status" aria-live="polite">${user?"Sesión de API activa: "+escapeHtml(user.name||user.email||user.role):"No has iniciado sesión en la API."}</p></article>
     </div>
-    <div class="grid two-col" style="margin-top:16px"><article class="card"><h3>Alta de empleado en API</h3><p class="muted">Crea un registro exclusivamente en la base del servidor. No modifica la lista local del archivo.</p><form id="apiEmployeeForm"><div class="field"><label for="apiEmployeeNumber">Número de empleado *</label><input id="apiEmployeeNumber" type="text" maxlength="40" required></div><div class="field"><label for="apiEmployeeName">Nombre completo *</label><input id="apiEmployeeName" type="text" maxlength="160" required></div><div class="field"><label for="apiEmployeeEmail">Correo (opcional)</label><input id="apiEmployeeEmail" type="email" maxlength="254"></div><div class="field"><label for="apiEmployeeRfc">RFC (opcional)</label><input id="apiEmployeeRfc" type="text" maxlength="13" autocomplete="off"></div><div class="field"><label for="apiEmployeeBranch">Sucursal</label><input id="apiEmployeeBranch" type="text" maxlength="100" value="Principal" required></div><button class="btn btn-primary" id="apiCreateEmployeeBtn" type="submit" ${user && ["admin","supervisor"].includes(user.role)?"":"disabled"}>Crear empleado en API</button><p id="apiEmployeeResult" class="hint" role="status" aria-live="polite">No se ha enviado ningún cambio.</p></form></article><article class="card"><h3>Datos del servidor</h3><p class="muted">Las consultas requieren iniciar sesión en la API. No cambian los datos locales.</p><form id="apiActivateLicenseForm" class="field" style="margin:12px 0"><label for="apiActivationCode">Activar o renovar licencia</label><div class="actions"><input id="apiActivationCode" type="password" autocomplete="off" minlength="20" maxlength="128" placeholder="Código de activación del proveedor" style="flex:1;min-width:220px" required><button class="btn btn-primary" id="apiActivateLicenseBtn" type="submit" disabled>Activar licencia</button></div><p class="hint">Disponible para el administrador de la empresa. El código se envía a la API configurada y no se guarda en el navegador.</p></form><div class="actions"><button class="btn btn-ghost" id="apiCompanyBtn" ${user && user.role==="admin"?"":"disabled"}>Consultar ID de empresa</button><button class="btn btn-ghost" id="apiEmployeesBtn" ${user?"":"disabled"}>Consultar empleados</button><button class="btn btn-ghost" id="apiLicenseBtn" ${user && user.role==="admin"?"":"disabled"}>Consultar licencia</button><button class="btn btn-ghost" id="apiRefreshLicenseBtn" ${user && user.role==="admin"?"":"disabled"}>Sincronizar / renovar licencia</button></div><pre id="apiDataResult" class="code-block" style="white-space:pre-wrap;overflow-wrap:anywhere">Aquí aparecerán los resultados de consulta.</pre><hr style="margin:18px 0;border:0;border-top:1px solid var(--line)"><h3>Registrar asistencia · en línea</h3><p class="muted">Registra directamente en la API. Requiere conexión y confirmación; todavía no tiene cola offline ni sincronización automática.</p><div class="field"><label for="apiPunchEmployee">Empleado activo</label><select id="apiPunchEmployee" disabled><option value="">Primero consulta empleados</option></select></div><div class="actions"><button class="btn btn-primary" id="apiClockInBtn" type="button" disabled>Registrar entrada</button><button class="btn btn-ghost" id="apiClockOutBtn" type="button" disabled>Registrar salida</button></div><p id="apiPunchResult" class="hint" role="status" aria-live="polite">No se ha registrado ninguna marca desde este panel.</p></article><article class="card"><h3>Importante</h3><ul><li>El inicio de sesión de esta API es independiente del administrador local de este archivo.</li><li>La contraseña no se guarda. El token de API vive solo en memoria y se elimina al cerrar sesión o si vence.</li><li>No se importan empleados ni asistencias automáticamente; primero habrá que revisar duplicados, permisos y respaldos.</li></ul></article></div>`;
+    <div class="grid two-col" style="margin-top:16px"><article class="card"><h3>Alta de empleado en API</h3><p class="muted">Crea un registro exclusivamente en la base del servidor. No modifica la lista local del archivo.</p><form id="apiEmployeeForm"><div class="field"><label for="apiEmployeeNumber">Número de empleado *</label><input id="apiEmployeeNumber" type="text" maxlength="40" required></div><div class="field"><label for="apiEmployeeName">Nombre completo *</label><input id="apiEmployeeName" type="text" maxlength="160" required></div><div class="field"><label for="apiEmployeeEmail">Correo (opcional)</label><input id="apiEmployeeEmail" type="email" maxlength="254"></div><div class="field"><label for="apiEmployeeRfc">RFC (opcional)</label><input id="apiEmployeeRfc" type="text" maxlength="13" autocomplete="off"></div><div class="field"><label for="apiEmployeeBranch">Sucursal</label><input id="apiEmployeeBranch" type="text" maxlength="100" value="Principal" required></div><button class="btn btn-primary" id="apiCreateEmployeeBtn" type="submit" ${user && ["admin","supervisor"].includes(user.role)?"":"disabled"}>Crear empleado en API</button><p id="apiEmployeeResult" class="hint" role="status" aria-live="polite">No se ha enviado ningún cambio.</p></form></article><article class="card"><h3>Datos del servidor</h3><p class="muted">Las consultas requieren iniciar sesión en la API. No cambian los datos locales.</p><form id="apiActivateLicenseForm" class="field" style="margin:12px 0"><label for="apiActivationCode">Activar o renovar licencia</label><div class="actions"><input id="apiActivationCode" type="password" autocomplete="off" minlength="20" maxlength="128" placeholder="Código de activación del proveedor" style="flex:1;min-width:220px" required><button class="btn btn-primary" id="apiActivateLicenseBtn" type="submit" disabled>Activar licencia</button></div><p class="hint">Disponible para el administrador de la empresa. El código se envía a la API configurada y no se guarda en el navegador.</p></form><div class="actions"><button class="btn btn-ghost" id="apiCompanyBtn" ${user && user.role==="admin"?"":"disabled"}>Consultar ID de empresa</button><button class="btn btn-ghost" id="apiEmployeesBtn" ${user?"":"disabled"}>Consultar empleados</button><button class="btn btn-ghost" id="apiLicenseBtn" ${user && user.role==="admin"?"":"disabled"}>Consultar licencia</button><button class="btn btn-ghost" id="apiRefreshLicenseBtn" ${user && user.role==="admin"?"":"disabled"}>Sincronizar / renovar licencia</button></div><pre id="apiDataResult" class="code-block" style="white-space:pre-wrap;overflow-wrap:anywhere">Aquí aparecerán los resultados de consulta.</pre><hr style="margin:18px 0;border:0;border-top:1px solid var(--line)"><h3>Registrar asistencia · en línea</h3><p class="muted">Registra directamente en la API. Requiere conexión y confirmación; todavía no tiene cola offline ni sincronización automática.</p><div class="field"><label for="apiPunchEmployee">Empleado activo</label><select id="apiPunchEmployee" disabled><option value="">Primero consulta empleados</option></select></div><div class="actions"><button class="btn btn-primary" id="apiClockInBtn" type="button" disabled>Registrar entrada</button><button class="btn btn-ghost" id="apiClockOutBtn" type="button" disabled>Registrar salida</button></div><p id="apiPunchResult" class="hint" role="status" aria-live="polite">No se ha registrado ninguna marca desde este panel.</p></article><article class="card"><h3>Descansos de comida · beta</h3>
+      <p class="muted">Configura el criterio de comida y registra salidas y regresos en la base de datos de la API. La configuración es por empresa.</p>
+      <div class="field"><label for="mealEmployeeSelect">Empleado</label><select id="mealEmployeeSelect" disabled><option value="">Primero consulta empleados</option></select></div>
+      <div class="field"><label for="mealMode">Modalidad</label><select id="mealMode"><option value="manual">Manual · registrar salida y regreso</option><option value="automatic">Automática · horario programado</option></select></div>
+      <div class="inline-fields">
+        <div class="field"><label for="mealDuration">Duración (minutos)</label><input id="mealDuration" type="number" min="1" max="240" step="1" value="60"></div>
+        <div class="field"><label for="mealScheduledStart">Hora programada</label><input id="mealScheduledStart" type="time" value="14:00"></div>
+      </div>
+      <div class="field"><label for="mealTimeZone">Zona horaria IANA</label><input id="mealTimeZone" type="text" value="America/Mexico_City" maxlength="80"><small class="hint">Ejemplo: America/Mexico_City. Se usa para resolver el horario automático.</small></div>
+      <label class="check"><input type="checkbox" id="mealCountsAsWork"> La comida cuenta como tiempo trabajado</label>
+      <div class="actions" style="margin-top:12px">
+        <button class="btn btn-ghost" id="mealLoadPolicy" type="button" ${user && user.role==="admin"?"":"disabled"}>Cargar configuración</button>
+        <button class="btn btn-primary" id="mealSavePolicy" type="button" ${user && user.role==="admin"?"":"disabled"}>Guardar configuración</button>
+      </div>
+      <div class="actions" style="margin-top:12px">
+        <button class="btn btn-ghost" id="mealOutBtn" type="button" disabled>Registrar salida a comer</button>
+        <button class="btn btn-ghost" id="mealReturnBtn" type="button" disabled>Registrar regreso</button>
+        <button class="btn btn-primary" id="mealCalculateBtn" type="button" disabled>Calcular horas efectivas</button>
+      </div>
+      <pre id="mealResult" class="code-block" style="white-space:pre-wrap;overflow-wrap:anywhere">Inicia sesión en la API y consulta empleados para usar esta sección.</pre>
+    </article><article class="card"><h3>Importante</h3><ul><li>El inicio de sesión de esta API es independiente del administrador local de este archivo.</li><li>La contraseña no se guarda. El token de API vive solo en memoria y se elimina al cerrar sesión o si vence.</li><li>No se importan empleados ni asistencias automáticamente; primero habrá que revisar duplicados, permisos y respaldos.</li></ul></article></div>`;
 }
 
 function bindApiSection(){
@@ -1462,7 +1482,7 @@ function bindApiSection(){
     catch(err){ authResult.textContent = err.message; }
   };
   if($("apiLogoutBtn")) $("apiLogoutBtn").onclick = ()=>{ if(window.__asistiaApiClient) window.__asistiaApiClient.logout(); authResult.textContent = "Sesión de API cerrada."; renderAdmin(); };
-  if($("apiEmployeesBtn")) $("apiEmployeesBtn").onclick = async ()=>{ dataResult.textContent = "Consultando…"; try{ const data = await getClient().employees({limit:100,offset:0}); dataResult.textContent = JSON.stringify(data,null,2); const select = $("apiPunchEmployee"); select.replaceChildren(); const active = (data.employees||[]).filter(employee=>employee.active===1 || employee.active===true); if(!active.length){ const option=document.createElement("option"); option.value=""; option.textContent="No hay empleados activos en esta página"; select.append(option); select.disabled=true; } else { for(const employee of active){ const option=document.createElement("option"); option.value=employee.id; option.textContent=(employee.employeeNumber||"")+" · "+(employee.fullName||"Empleado"); select.append(option); } select.disabled=false; } const canPunch=!!(window.__asistiaApiClient && window.__asistiaApiClient.isAuthenticated && active.length); $("apiClockInBtn").disabled=!canPunch; $("apiClockOutBtn").disabled=!canPunch; }catch(err){ dataResult.textContent = err.message; } };
+  if($("apiEmployeesBtn")) $("apiEmployeesBtn").onclick = async ()=>{ dataResult.textContent = "Consultando…"; try{ const data = await getClient().employees({limit:100,offset:0}); dataResult.textContent = JSON.stringify(data,null,2); const select = $("apiPunchEmployee"); const mealSelect = $("mealEmployeeSelect"); if(mealSelect) mealSelect.replaceChildren(); select.replaceChildren(); const active = (data.employees||[]).filter(employee=>employee.active===1 || employee.active===true); if(!active.length){ const option=document.createElement("option"); option.value=""; option.textContent="No hay empleados activos en esta página"; select.append(option); select.disabled=true; } else { for(const employee of active){ const option=document.createElement("option"); option.value=employee.id; option.textContent=(employee.employeeNumber||"")+" · "+(employee.fullName||"Empleado"); select.append(option); if(mealSelect){ const mealOption=document.createElement("option"); mealOption.value=employee.id; mealOption.textContent=option.textContent; mealSelect.append(mealOption); } } select.disabled=false; } const canPunch=!!(window.__asistiaApiClient && window.__asistiaApiClient.isAuthenticated && active.length); $("apiClockInBtn").disabled=!canPunch; $("apiClockOutBtn").disabled=!canPunch; }catch(err){ dataResult.textContent = err.message; } };
    if($("apiEmployeeForm")) $("apiEmployeeForm").onsubmit = async e=>{
      e.preventDefault();
      const form = $("apiEmployeeForm");
@@ -1529,6 +1549,65 @@ function bindApiSection(){
   if($("apiCompanyBtn")) $("apiCompanyBtn").disabled = !(window.__asistiaApiClient && window.__asistiaApiClient.isAuthenticated && window.__asistiaApiClient.currentUser && window.__asistiaApiClient.currentUser.role==="admin");
   if($("apiRefreshLicenseBtn")) $("apiRefreshLicenseBtn").disabled = !(window.__asistiaApiClient && window.__asistiaApiClient.isAuthenticated && window.__asistiaApiClient.currentUser && window.__asistiaApiClient.currentUser.role==="admin");
     if($("apiLicenseBtn")) $("apiLicenseBtn").disabled = !(window.__asistiaApiClient && window.__asistiaApiClient.isAuthenticated && window.__asistiaApiClient.currentUser && window.__asistiaApiClient.currentUser.role==="admin");
+  const mealResult = $("mealResult");
+  const mealRole = (window.__asistiaApiClient && window.__asistiaApiClient.currentUser || {}).role;
+  const mealAdmin = mealRole === "admin";
+  const mealEmployee = () => $("mealEmployeeSelect") && $("mealEmployeeSelect").value;
+  const mealSetResult = value => { if(mealResult) mealResult.textContent = typeof value === "string" ? value : JSON.stringify(value,null,2); };
+  if($("mealLoadPolicy")) $("mealLoadPolicy").onclick = async ()=>{
+    mealSetResult("Cargando configuración…");
+    try{
+      const data=await getClient().mealBreakPolicy(), p=data.policy||{};
+      $("mealMode").value=p.mode||"manual";
+      $("mealDuration").value=p.durationMinutes||60;
+      $("mealScheduledStart").value=p.scheduledStart||"14:00";
+      $("mealTimeZone").value=p.timeZone||"America/Mexico_City";
+      $("mealCountsAsWork").checked=!!p.countsAsWork;
+      mealSetResult({message:"Configuración cargada.",policy:p});
+    }catch(err){ mealSetResult(err.message); }
+  };
+  if($("mealSavePolicy")) $("mealSavePolicy").onclick = async ()=>{
+    if(!mealAdmin){ mealSetResult("Solo el administrador puede cambiar la política de comida."); return; }
+    const policy={
+      mode:$("mealMode").value,
+      durationMinutes:Number($("mealDuration").value),
+      scheduledStart:$("mealMode").value==="automatic"?$("mealScheduledStart").value:null,
+      countsAsWork:$("mealCountsAsWork").checked,
+      timeZone:$("mealTimeZone").value.trim()
+    };
+    mealSetResult("Guardando configuración…");
+    try{ const result=await getClient().updateMealBreakPolicy(policy); mealSetResult({message:"Política guardada.",policy:result.policy}); }
+    catch(err){ mealSetResult(err.message); }
+  };
+  const sendMealEvent = async eventType=>{
+    const employeeId=mealEmployee();
+    if(!employeeId){ mealSetResult("Selecciona un empleado."); return; }
+    const label=eventType==="meal_out"?"salida a comer":"regreso de comida";
+    if(!window.confirm("¿Registrar "+label+" para el empleado seleccionado?")) return;
+    $("mealOutBtn").disabled=true; $("mealReturnBtn").disabled=true;
+    try{ const result=await getClient().mealBreakEvent(employeeId,eventType); mealSetResult({message:"Marca registrada correctamente.",event:result.event}); }
+    catch(err){ mealSetResult(err.message); }
+    finally{
+      const enabled=!!(window.__asistiaApiClient&&window.__asistiaApiClient.isAuthenticated&&mealEmployee());
+      $("mealOutBtn").disabled=!enabled; $("mealReturnBtn").disabled=!enabled;
+    }
+  };
+  if($("mealOutBtn")) $("mealOutBtn").onclick=()=>sendMealEvent("meal_out");
+  if($("mealReturnBtn")) $("mealReturnBtn").onclick=()=>sendMealEvent("meal_return");
+  if($("mealCalculateBtn")) $("mealCalculateBtn").onclick=async ()=>{
+    const employeeId=mealEmployee();
+    if(!employeeId){ mealSetResult("Selecciona un empleado."); return; }
+    mealSetResult("Calculando horas efectivas…");
+    try{ mealSetResult(await getClient().effectiveAttendance(employeeId)); }
+    catch(err){ mealSetResult(err.message); }
+  };
+  const canUseMeal=!!(window.__asistiaApiClient&&window.__asistiaApiClient.isAuthenticated);
+  if($("mealEmployeeSelect")) $("mealEmployeeSelect").disabled=!canUseMeal;
+  if($("mealOutBtn")) $("mealOutBtn").disabled=!canUseMeal||!mealEmployee();
+  if($("mealReturnBtn")) $("mealReturnBtn").disabled=!canUseMeal||!mealEmployee();
+  if($("mealCalculateBtn")) $("mealCalculateBtn").disabled=!canUseMeal||!mealEmployee();
+  if($("mealLoadPolicy")) $("mealLoadPolicy").disabled=!mealAdmin;
+  if($("mealSavePolicy")) $("mealSavePolicy").disabled=!mealAdmin;
   if($("apiActivateLicenseBtn")) $("apiActivateLicenseBtn").disabled = !(window.__asistiaApiClient && window.__asistiaApiClient.isAuthenticated && window.__asistiaApiClient.currentUser && window.__asistiaApiClient.currentUser.role==="admin");
 }
 
