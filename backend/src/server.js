@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { randomUUID, randomBytes, createHash, createCipheriv, createDecipheriv } from 'node:crypto';
 import { verifyLicenseDocument } from './license-verifier.js';
 import { getLicensePresentation } from './license-policy.js';
+import { installMealBreakRoutes } from './meal-break-routes.js';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import Database from 'better-sqlite3';
@@ -230,10 +231,10 @@ const userSchema = z.object({
 const eventSchema = z.object({
   employeeId:z.string().uuid(),
   eventType:z.enum(['clock_in','clock_out']),
-  occurredAt:z.string().datetime({offset:true}).optional(),
+  occurredAt:z.iso.datetime({offset:true}).optional(),
   source:z.enum(['web','admin','kiosk']).default('web')
 });
-const correctionSchema = z.object({ eventId:z.string().uuid(), reason:z.string().trim().min(8).max(1000), proposedTime:z.string().datetime({offset:true}) });
+const correctionSchema = z.object({ eventId:z.string().uuid(), reason:z.string().trim().min(8).max(1000), proposedTime:z.iso.datetime({offset:true}) });
 const agreementSchema = z.object({ employeeId:z.string().uuid(), version:z.string().trim().min(1).max(40), statement:z.string().trim().min(10).max(3000), method:z.enum(['in_person','paper_reference','electronic_acknowledgement','other']) });
 
 app.get('/api/health', (req,res) => {
@@ -745,6 +746,8 @@ app.get('/api/audit', authenticate, roles('admin'), (req,res,next) => {
   res.json({entries:rows,pagination:{limit,offset,total,hasMore:offset+rows.length<total}});
   } catch(e) { next(e); }
 });
+
+installMealBreakRoutes({ app, db, authenticate, roles, appError, writeAudit, assertLicenseAllowsOperation });
 
 app.use((req,res,next) => next(appError(404,'Ruta no encontrada.')));
 app.use((err,req,res,next) => {
