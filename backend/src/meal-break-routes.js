@@ -178,17 +178,23 @@ export function installMealBreakRoutes({ app, db, authenticate, roles, appError,
       if (req.user.role === 'worker' && req.user.employeeId !== employeeId) throw appError(403, 'Solo puedes registrar tu propio descanso.');
       const employee = db.prepare('SELECT id,active FROM employees WHERE id=? AND company_id=?').get(employeeId, req.user.companyId);
       if (!employee || !employee.active) throw appError(404, 'Empleado no encontrado o inactivo.');
-      const latestAttendance = db.prepare(`SELECT e.event_type AS eventType FROM attendance_events e
-        WHERE e.company_id=? AND e.employee_id=?
-        ORDER BY COALESCE((SELECT a.adjusted_time FROM attendance_adjustments a
-          WHERE a.original_event_id=e.id ORDER BY a.rowid DESC LIMIT 1),e.occurred_at) DESC,e.rowid DESC LIMIT 1`)
-        .get(req.user.companyId, employeeId);
+      const latestAttendance = db.prepare(`SELECT e.event_type AS eventType,
+        COALESCE((SELECT a.adjusted_time FROM attendance_adjustments a
+          WHERE a.original_event_id=e.id ORDER BY a.rowid DESC LIMIT 1),e.occurred_at) AS occurredAt
+        FROM attendance_events e WHERE e.company_id=? AND e.employee_id=?
+        ORDER BY occurredAt DESC,e.rowid DESC LIMIT 1`).get(req.user.companyId, employeeId);
       if (!latestAttendance || latestAttendance.eventType !== 'clock_in') throw appError(409, 'Solo puedes registrar comida durante una jornada abierta.');
-      const openMeal = db.prepare(`SELECT event_type FROM meal_break_events
+      const openMeal = db.prepare(`SELECT event_type,occurred_at FROM meal_break_events
         WHERE company_id=? AND employee_id=? ORDER BY occurred_at DESC,rowid DESC LIMIT 1`).get(req.user.companyId, employeeId);
       if (eventType === 'meal_out' && openMeal?.event_type === 'meal_out') throw appError(409, 'Ya existe una salida a comer sin regreso.');
       if (eventType === 'meal_return' && (!openMeal || openMeal.event_type !== 'meal_out')) throw appError(409, 'No existe una salida a comer pendiente de regreso.');
       const occurredAt = new Date().toISOString();
+      if (Date.parse(occurredAt) <= Date.parse(latestAttendance.occurredAt)) {
+        throw appError(409, 'La hora del descanso debe ser posterior a la última marca de asistencia.');
+      }
+      if (eventType === 'meal_return' && Date.parse(occurredAt) <= Date.parse(openMeal.occurred_at)) {
+        throw appError(409, 'El regreso debe ser posterior a la salida a comer.');
+      }
       const previousHash = db.prepare('SELECT event_hash FROM meal_break_events WHERE company_id=? ORDER BY rowid DESC LIMIT 1').get(req.user.companyId)?.event_hash || null;
       const id = randomUUID();
       const payload = { id, companyId: req.user.companyId, employeeId, eventType, occurredAt, createdBy: req.user.id, previousHash };
