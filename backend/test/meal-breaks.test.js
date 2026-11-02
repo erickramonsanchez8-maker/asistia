@@ -1,6 +1,6 @@
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const { calculateEffectiveMinutes, validatePolicy } = require('../src/meal-breaks.js');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { calculateEffectiveMinutes, validatePolicy } from '../src/meal-breaks.js';
 
 const manual = { mode: 'manual', durationMinutes: 60, countsAsWork: false };
 const automatic = { mode: 'automatic', durationMinutes: 60, scheduledStart: '14:00', countsAsWork: false };
