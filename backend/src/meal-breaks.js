@@ -4,7 +4,7 @@
  * Los instantes deben ser ISO-8601 con zona/offset explícito.
  */
 const MODES = new Set(['manual', 'automatic']);
-const OFFSET_INSTANT = /^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?(?:Z|[+-](?:0\\d|1\\d|2[0-3]):[0-5]\\d)$/;
+const OFFSET_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-](?:0\d|1\d|2[0-3]):[0-5]\d)$/;
 
 function toMillis(value, label) {
   if (typeof value !== 'string' || !OFFSET_INSTANT.test(value)) {
@@ -22,7 +22,7 @@ export function validatePolicy(policy) {
     throw new RangeError('La duración de comida debe estar entre 1 y 240 minutos.');
   }
   if (typeof policy.countsAsWork !== 'boolean') throw new TypeError('countsAsWork debe ser booleano.');
-  if (policy.mode === 'automatic' && !/^([01]\\d|2[0-3]):[0-5]\\d$/.test(String(policy.scheduledStart || ''))) {
+  if (policy.mode === 'automatic' && !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(policy.scheduledStart || ''))) {
     throw new TypeError('La modalidad automática requiere scheduledStart en formato HH:mm.');
   }
   return { ...policy, durationMinutes };
@@ -57,8 +57,8 @@ function localParts(timestamp, timeZone) {
  * la primera ocurrencia (instante UTC más temprano) para mantener determinismo.
  */
 export function resolveLocalDateTime({ date, time, timeZone }) {
-  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(String(date || ''))) throw new TypeError('La fecha del turno debe usar YYYY-MM-DD.');
-  if (!/^([01]\\d|2[0-3]):[0-5]\\d$/.test(String(time || ''))) throw new TypeError('La hora programada debe usar HH:mm.');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ''))) throw new TypeError('La fecha del turno debe usar YYYY-MM-DD.');
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(String(time || ''))) throw new TypeError('La hora programada debe usar HH:mm.');
   if (typeof timeZone !== 'string' || !timeZone.trim()) throw new TypeError('Se requiere la zona horaria IANA del negocio.');
   const [year, month, day] = date.split('-').map(Number);
   const [hour, minute] = time.split(':').map(Number);
