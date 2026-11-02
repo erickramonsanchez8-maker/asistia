@@ -11,7 +11,7 @@ function toMillis(value, label) {
   return ms;
 }
 
-function validatePolicy(policy) {
+export function validatePolicy(policy) {
   if (!policy || !MODES.has(policy.mode)) throw new TypeError('La modalidad de comida debe ser manual o automatic.');
   const durationMinutes = Number(policy.durationMinutes);
   if (!Number.isInteger(durationMinutes) || durationMinutes < 1 || durationMinutes > 240) {
@@ -43,7 +43,7 @@ function clipInterval(start, end, lower, upper) {
  * automaticBreak.startAt debe ser el instante UTC resuelto por el servicio de turnos
  * a partir de scheduledStart y la zona horaria IANA de la empresa.
  */
-function calculateEffectiveMinutes({ clockInAt, clockOutAt, policy, breaks = [], automaticBreak = null }) {
+export function calculateEffectiveMinutes({ clockInAt, clockOutAt, policy, breaks = [], automaticBreak = null }) {
   const config = validatePolicy(policy);
   const start = toMillis(clockInAt, 'clockInAt');
   const end = toMillis(clockOutAt, 'clockOutAt');
@@ -79,4 +79,3 @@ function calculateEffectiveMinutes({ clockInAt, clockOutAt, policy, breaks = [],
   });
 }
 
-module.exports = Object.freeze({ validatePolicy, calculateEffectiveMinutes });
