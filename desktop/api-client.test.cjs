@@ -73,3 +73,29 @@ test('valida evento y origen compatibles con el esquema de la API', async () => 
   assert.equal(calls[0].url, 'http://127.0.0.1:3000/api/attendance/events');
   assert.equal(calls[0].options.body, JSON.stringify({employeeId:'employee-1',eventType:'clock_in',source:'admin'}));
 });
+
+test('cliente expone configuración de comida, marcas y cálculo de horas efectivas', async () => {
+  const calls = [];
+  const client = createClient({
+    baseUrl: 'http://127.0.0.1:3000',
+    fetch: async (url, options) => {
+      calls.push({ url, options });
+      return fakeResponse(200, { ok: true, policy: { mode: 'manual' } });
+    }
+  });
+  await client.mealBreakPolicy();
+  await client.updateMealBreakPolicy({
+    mode: 'automatic', durationMinutes: 45, scheduledStart: '14:00',
+    countsAsWork: false, timeZone: 'America/Mexico_City'
+  });
+  await client.mealBreakEvent('employee-1', 'meal_out');
+  await client.mealBreakEvents('employee-1');
+  await client.effectiveAttendance('employee-1');
+  assert.equal(calls[0].url, 'http://127.0.0.1:3000/api/meal-break/policy');
+  assert.equal(calls[1].options.method, 'PUT');
+  assert.equal(calls[2].options.body, JSON.stringify({ employeeId: 'employee-1', eventType: 'meal_out' }));
+  assert.match(calls[3].url, /employeeId=employee-1/);
+  assert.match(calls[4].url, /employeeId=employee-1/);
+  assert.throws(() => client.mealBreakEvent('employee-1', 'clock_in'), /no válidos/);
+  assert.throws(() => client.effectiveAttendance(''), /Selecciona un empleado/);
+});
