@@ -4,10 +4,12 @@ on:
   pull_request:
     branches:
       - main
+      - 'feature/**'
   push:
     branches:
       - feature/desktop-licensing
       - feature/license-expiry-readonly-policy
+      - feature/local-core-meal-breaks
   workflow_dispatch:
 
 permissions:
