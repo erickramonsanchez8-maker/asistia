@@ -63,7 +63,7 @@ function pairMealEvents(events) {
   return { breaks, incomplete: Boolean(open), error: open ? 'Falta registrar el regreso de comida.' : null };
 }
 
-function buildEffectiveShifts({ attendanceEvents, mealEvents, policyForShift }) {
+export function buildEffectiveShifts({ attendanceEvents, mealEvents, policyForShift }) {
   const shifts = [];
   let openShift = null;
   for (const event of attendanceEvents) {
