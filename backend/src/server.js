@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { randomUUID, randomBytes, createHash, createCipheriv, createDecipheriv } from 'node:crypto';
 import { verifyLicenseDocument } from './license-verifier.js';
 import { getLicensePresentation } from './license-policy.js';
+import { installMealBreakRoutes } from './meal-break-routes.js';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import Database from 'better-sqlite3';
@@ -745,6 +746,8 @@ app.get('/api/audit', authenticate, roles('admin'), (req,res,next) => {
   res.json({entries:rows,pagination:{limit,offset,total,hasMore:offset+rows.length<total}});
   } catch(e) { next(e); }
 });
+
+installMealBreakRoutes({ app, db, authenticate, roles, appError, writeAudit, assertLicenseAllowsOperation });
 
 app.use((req,res,next) => next(appError(404,'Ruta no encontrada.')));
 app.use((err,req,res,next) => {
