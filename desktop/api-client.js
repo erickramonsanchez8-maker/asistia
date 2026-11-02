@@ -121,6 +121,26 @@
         const suffix = query.toString();
         return request('/api/attendance/events' + (suffix ? '?' + suffix : ''));
       },
+      mealBreakPolicy() { return request('/api/meal-break/policy'); },
+      updateMealBreakPolicy(policy) {
+        if (!policy || !['manual','automatic'].includes(policy.mode)) throw new Error('Modalidad de comida no válida.');
+        return request('/api/meal-break/policy', { method: 'PUT', body: policy });
+      },
+      mealBreakEvent(employeeId, eventType) {
+        if (!employeeId || !['meal_out','meal_return'].includes(eventType)) throw new Error('Datos del descanso de comida no válidos.');
+        return request('/api/meal-break/events', { method: 'POST', body: { employeeId: String(employeeId), eventType } });
+      },
+      mealBreakEvents(employeeId) {
+        const query = new URLSearchParams();
+        if (employeeId) query.set('employeeId', String(employeeId));
+        const suffix = query.toString();
+        return request('/api/meal-break/events' + (suffix ? '?' + suffix : ''));
+      },
+      effectiveAttendance(employeeId) {
+        if (!employeeId) throw new Error('Selecciona un empleado para calcular sus horas efectivas.');
+        const query = new URLSearchParams({ employeeId: String(employeeId) });
+        return request('/api/attendance/effective?' + query.toString());
+      },
       licenseStatus() { return request('/api/license/status'); },
       activateLicense(activationCode) {
         return request('/api/license/activate', { method: 'POST', body: { activationCode } });
