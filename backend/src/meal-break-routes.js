@@ -178,9 +178,11 @@ export function installMealBreakRoutes({ app, db, authenticate, roles, appError,
       if (req.user.role === 'worker' && req.user.employeeId !== employeeId) throw appError(403, 'Solo puedes registrar tu propio descanso.');
       const employee = db.prepare('SELECT id,active FROM employees WHERE id=? AND company_id=?').get(employeeId, req.user.companyId);
       if (!employee || !employee.active) throw appError(404, 'Empleado no encontrado o inactivo.');
-      const latestAttendance = db.prepare(`SELECT event_type AS eventType FROM attendance_events
-        WHERE company_id=? AND employee_id=?
-        ORDER BY occurred_at DESC,rowid DESC LIMIT 1`).get(req.user.companyId, employeeId);
+      const latestAttendance = db.prepare(`SELECT e.event_type AS eventType FROM attendance_events e
+        WHERE e.company_id=? AND e.employee_id=?
+        ORDER BY COALESCE((SELECT a.adjusted_time FROM attendance_adjustments a
+          WHERE a.original_event_id=e.id ORDER BY a.rowid DESC LIMIT 1),e.occurred_at) DESC,e.rowid DESC LIMIT 1`)
+        .get(req.user.companyId, employeeId);
       if (!latestAttendance || latestAttendance.eventType !== 'clock_in') throw appError(409, 'Solo puedes registrar comida durante una jornada abierta.');
       const openMeal = db.prepare(`SELECT event_type FROM meal_break_events
         WHERE company_id=? AND employee_id=? ORDER BY occurred_at DESC,rowid DESC LIMIT 1`).get(req.user.companyId, employeeId);
