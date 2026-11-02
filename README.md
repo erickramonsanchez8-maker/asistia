@@ -6,10 +6,11 @@ Sistema de control de asistencia en evolución hacia una aplicación de escritor
 
 - **Interfaz heredada:** `ASISTIA_Control_de_Asistencia.html`, con funciones que conservan almacenamiento local.
 - **API local 0.3:** Node.js + Express + SQLite, autenticación JWT, roles, separación por empresa, eventos de asistencia, ajustes trazables, bitácora y reportes CSV.
-- **Conexión de escritorio beta:** la interfaz incluye un panel para probar la API, iniciar sesión, consultar empleados/licencia y registrar eventos desde el backend.
+- **Descansos de comida (beta, rama de desarrollo):** políticas manuales/automáticas por empresa, historial de políticas, marcas manuales append-only, resolución de horario por zona IANA y consulta de tiempo efectivo por jornada.
+- **Conexión de escritorio beta:** el panel permite probar la API, iniciar sesión, consultar empleados/licencia, registrar eventos y administrar descansos de comida desde la API local.
 - **Instalador Windows en preparación:** el workflow [ASISTIA Windows installer](.github/workflows/windows-installer.yml) construye un instalador x64 y publica un artefacto en GitHub Actions cuando finaliza correctamente.
 
-La interfaz heredada y la API **todavía no sincronizan sus historiales automáticamente**. El panel de API requiere que el backend local esté funcionando y aún no incluye cola offline ni reconciliación de eventos. El código de licencias no significa que el servicio remoto esté desplegado, que existan cobros automáticos o que el producto esté certificado para uso laboral.
+La interfaz heredada y la API **todavía no sincronizan sus historiales automáticamente**. El módulo de descansos está en beta y aún no sustituye el flujo HTTP por IPC directo ni forma parte de todos los reportes. El panel de API requiere que el backend local esté funcionando y aún no incluye cola offline ni reconciliación de eventos. El código de licencias no significa que el servicio remoto esté desplegado, que existan cobros automáticos o que el producto esté certificado para uso laboral.
 
 Para conocer el alcance, la configuración y los límites del instalador, consulta [ASISTIA para Windows — instalador beta](docs/ASISTIA_DESCARGA_WINDOWS.md) y [arquitectura de escritorio y licencias](docs/ASISTIA_DESKTOP_ARQUITECTURA.md). La arquitectura de escritorio describe componentes y trabajo pendiente; no constituye una promesa de disponibilidad comercial.
 
