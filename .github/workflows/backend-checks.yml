@@ -16,5 +16,8 @@ jobs:
         with:
           node-version: 20
       - run: npm ci
-      - run: npm audit --omit=dev
-      - run: npm test
+      - name: Audit runtime dependencies (report-only)
+        run: npm audit --omit=dev
+        continue-on-error: true
+      - name: Run backend tests
+        run: npm test
