@@ -55,7 +55,7 @@
   addStyles();
   const sync = () => { ensureBadge(); checkHealth(); };
   const observer = new MutationObserver(sync);
-  observer.observe(appRoot, { childList: true, subtree: true });
+  observer.observe(appRoot, { childList: true, subtree: false });
   sync();
   window.addEventListener('focus', checkHealth);
 })();
