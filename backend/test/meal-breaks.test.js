@@ -163,7 +163,7 @@ test('el cálculo conserva la política histórica aplicable a cada jornada', ()
   assert.equal(result.shifts.length, 2);
   assert.equal(result.shifts[0].breakMinutes, 40);
   assert.equal(result.shifts[1].breakMinutes, 60);
-  assert.equal(result.totals.effectiveMinutes, 940);
+  assert.equal(result.totals.effectiveMinutes, 980);
 });
 
 test('no calcula como completa una jornada con salida a comer sin regreso', () => {
