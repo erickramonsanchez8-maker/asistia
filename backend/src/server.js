@@ -231,10 +231,10 @@ const userSchema = z.object({
 const eventSchema = z.object({
   employeeId:z.string().uuid(),
   eventType:z.enum(['clock_in','clock_out']),
-  occurredAt:z.string().datetime({offset:true}).optional(),
+  occurredAt:z.iso.datetime({offset:true}).optional(),
   source:z.enum(['web','admin','kiosk']).default('web')
 });
-const correctionSchema = z.object({ eventId:z.string().uuid(), reason:z.string().trim().min(8).max(1000), proposedTime:z.string().datetime({offset:true}) });
+const correctionSchema = z.object({ eventId:z.string().uuid(), reason:z.string().trim().min(8).max(1000), proposedTime:z.iso.datetime({offset:true}) });
 const agreementSchema = z.object({ employeeId:z.string().uuid(), version:z.string().trim().min(1).max(40), statement:z.string().trim().min(10).max(3000), method:z.enum(['in_person','paper_reference','electronic_acknowledgement','other']) });
 
 app.get('/api/health', (req,res) => {
