@@ -85,8 +85,8 @@ export function buildEffectiveShifts({ attendanceEvents, mealEvents, policyForSh
         continue;
       }
       try {
-        const automaticBreak = policy.mode === 'automatic'
-          ? resolveAutomaticBreak({ shiftDate: dateInZone(inAt, policy.timeZone), policy, timeZone: policy.timeZone })
+        const automaticBreak = shiftPolicy.mode === 'automatic'
+          ? resolveAutomaticBreak({ shiftDate: dateInZone(inAt, shiftPolicy.timeZone), policy: shiftPolicy, timeZone: shiftPolicy.timeZone })
           : null;
         const totals = calculateEffectiveMinutes({
           clockInAt: inAt,
