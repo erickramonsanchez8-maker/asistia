@@ -31,6 +31,14 @@ function getPolicy(db, companyId) {
   return row ? { ...row, countsAsWork: Boolean(row.countsAsWork) } : { ...DEFAULT_POLICY };
 }
 
+function getPolicyAt(db, companyId, instant) {
+  const row = db.prepare(`SELECT mode,duration_minutes AS durationMinutes,scheduled_start AS scheduledStart,
+    counts_as_work AS countsAsWork,time_zone AS timeZone
+    FROM meal_break_policy_history WHERE company_id=? AND effective_at<=?
+    ORDER BY effective_at DESC,rowid DESC LIMIT 1`).get(companyId, instant);
+  return row ? { ...row, countsAsWork: Boolean(row.countsAsWork) } : { ...DEFAULT_POLICY };
+}
+
 function dateInZone(instant, timeZone) {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone, year: 'numeric', month: '2-digit', day: '2-digit'
@@ -55,7 +63,7 @@ function pairMealEvents(events) {
   return { breaks, incomplete: Boolean(open), error: open ? 'Falta registrar el regreso de comida.' : null };
 }
 
-function buildEffectiveShifts({ attendanceEvents, mealEvents, policy }) {
+function buildEffectiveShifts({ attendanceEvents, mealEvents, policyForShift }) {
   const shifts = [];
   let openShift = null;
   for (const event of attendanceEvents) {
@@ -69,7 +77,8 @@ function buildEffectiveShifts({ attendanceEvents, mealEvents, policy }) {
       }
       const inAt = openShift;
       openShift = null;
-      const meals = mealEvents.filter(item => Date.parse(item.occurred_at) >= Date.parse(inAt) && Date.parse(item.occurred_at) <= Date.parse(event.occurredAt));
+      const shiftPolicy = policyForShift(inAt);
+      const meals = shiftPolicy.mode === 'manual' ? mealEvents.filter(item => Date.parse(item.occurred_at) >= Date.parse(inAt) && Date.parse(item.occurred_at) <= Date.parse(event.occurredAt)) : [];
       const paired = pairMealEvents(meals);
       if (paired.incomplete) {
         shifts.push({ clockInAt: inAt, clockOutAt: event.occurredAt, status: 'incomplete', issue: paired.error });
@@ -82,11 +91,11 @@ function buildEffectiveShifts({ attendanceEvents, mealEvents, policy }) {
         const totals = calculateEffectiveMinutes({
           clockInAt: inAt,
           clockOutAt: event.occurredAt,
-          policy,
+          policy: shiftPolicy,
           breaks: paired.breaks,
           automaticBreak
         });
-        shifts.push({ clockInAt: inAt, clockOutAt: event.occurredAt, status: 'complete', ...totals });
+        shifts.push({ clockInAt: inAt, clockOutAt: event.occurredAt, status: 'complete', policy: shiftPolicy, ...totals });
       } catch (error) {
         shifts.push({ clockInAt: inAt, clockOutAt: event.occurredAt, status: 'incomplete', issue: error.message });
       }
@@ -143,13 +152,17 @@ export function installMealBreakRoutes({ app, db, authenticate, roles, appError,
       assertLicenseAllowsOperation(req.user.companyId, 'configurar descansos de comida');
       const policy = validateStoredPolicy(req.body);
       const updatedAt = new Date().toISOString();
-      db.prepare(`INSERT INTO meal_break_policies(company_id,mode,duration_minutes,scheduled_start,counts_as_work,time_zone,updated_at,updated_by)
-        VALUES(?,?,?,?,?,?,?,?)
-        ON CONFLICT(company_id) DO UPDATE SET mode=excluded.mode,duration_minutes=excluded.duration_minutes,
-        scheduled_start=excluded.scheduled_start,counts_as_work=excluded.counts_as_work,time_zone=excluded.time_zone,
-        updated_at=excluded.updated_at,updated_by=excluded.updated_by`)
-        .run(req.user.companyId, policy.mode, policy.durationMinutes, policy.scheduledStart, policy.countsAsWork ? 1 : 0, policy.timeZone, updatedAt, req.user.id);
-      writeAudit(req.user.companyId, req.user.id, 'meal_break.policy_updated', 'meal_break_policy', req.user.companyId, policy);
+      db.transaction(() => {
+        db.prepare(`INSERT INTO meal_break_policies(company_id,mode,duration_minutes,scheduled_start,counts_as_work,time_zone,updated_at,updated_by)
+          VALUES(?,?,?,?,?,?,?,?)
+          ON CONFLICT(company_id) DO UPDATE SET mode=excluded.mode,duration_minutes=excluded.duration_minutes,
+          scheduled_start=excluded.scheduled_start,counts_as_work=excluded.counts_as_work,time_zone=excluded.time_zone,
+          updated_at=excluded.updated_at,updated_by=excluded.updated_by`)
+          .run(req.user.companyId, policy.mode, policy.durationMinutes, policy.scheduledStart, policy.countsAsWork ? 1 : 0, policy.timeZone, updatedAt, req.user.id);
+        db.prepare(`INSERT INTO meal_break_policy_history(id,company_id,mode,duration_minutes,scheduled_start,counts_as_work,time_zone,effective_at,updated_by)
+          VALUES(?,?,?,?,?,?,?,?,?)`).run(randomUUID(), req.user.companyId, policy.mode, policy.durationMinutes, policy.scheduledStart, policy.countsAsWork ? 1 : 0, policy.timeZone, updatedAt, req.user.id);
+        writeAudit(req.user.companyId, req.user.id, 'meal_break.policy_updated', 'meal_break_policy', req.user.companyId, { ...policy, effectiveAt: updatedAt });
+      })();
       res.json({ ok: true, policy: getPolicy(db, req.user.companyId), updatedAt });
     } catch (error) { next(error.status ? error : appError(400, error.message)); }
   });
@@ -210,7 +223,15 @@ export function installMealBreakRoutes({ app, db, authenticate, roles, appError,
       const mealEvents = db.prepare(`SELECT event_type,occurred_at FROM meal_break_events
         WHERE company_id=? AND employee_id=? ORDER BY occurred_at,rowid`).all(req.user.companyId, employeeId);
       const policy = getPolicy(db, req.user.companyId);
-      res.json({ employee, policy, ...buildEffectiveShifts({ attendanceEvents, mealEvents, policy }) });
+      res.json({
+        employee,
+        policy,
+        ...buildEffectiveShifts({
+          attendanceEvents,
+          mealEvents,
+          policyForShift: instant => getPolicyAt(db, req.user.companyId, instant)
+        })
+      });
     } catch (error) { next(error); }
   });
 }
