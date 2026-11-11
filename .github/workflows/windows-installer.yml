@@ -1,14 +1,16 @@
-name: ASISTIA Windows installer
+name: ASISTIA Windows installer and update package
 
 on:
   push:
-    branches: [main]
+    branches: [main, "feature/automatic-breaks-and-inapp-updater"]
     paths:
       - "ASISTIA_Control_de_Asistencia.html"
       - "package.json"
       - "backend/**"
       - "desktop/**"
       - ".github/workflows/windows-installer.yml"
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -39,10 +41,44 @@ jobs:
           if (!(Test-Path backend/runtime/node.exe)) { throw "No se pudo copiar node.exe" }
       - name: Build Windows NSIS installer
         run: npm run dist:win
-      - name: Upload installer
+      - name: Build in-app update package
+        shell: pwsh
+        run: |
+          @'
+          const fs = require('node:fs');
+          const crypto = require('node:crypto');
+          const files = ['ASISTIA_Control_de_Asistencia.html', 'desktop/desktop-enhancements.js'];
+          const pkg = {
+            format: 'asistia-update-v1',
+            appId: 'mx.asistia.desktop',
+            version: '0.6.1',
+            releaseNotes: [
+              'Descuento automático del descanso configurado en el horario.',
+              'Actualizador interno con validación de integridad y respaldo de la versión anterior.'
+            ],
+            files: files.map(file => {
+              const bytes = fs.readFileSync(file);
+              return {
+                path: file,
+                sha256: crypto.createHash('sha256').update(bytes).digest('hex'),
+                contentBase64: bytes.toString('base64')
+              };
+            })
+          };
+          fs.mkdirSync('release', { recursive: true });
+          fs.writeFileSync('release/ASISTIA-Update-v0.6.1.asistia-update', JSON.stringify(pkg));
+          '@ | node
+      - name: Upload Windows installer
         uses: actions/upload-artifact@v4
         with:
-          name: ASISTIA-Setup-v0.5.0-x64
+          name: ASISTIA-Setup-v0.6.0-x64
           path: release/*.exe
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload in-app update package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ASISTIA-Update-v0.6.1
+          path: release/*.asistia-update
           if-no-files-found: error
           retention-days: 30
