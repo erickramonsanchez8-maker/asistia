@@ -7,6 +7,9 @@ const crypto = require('node:crypto');
 
 const API_PORT = 43177;
 const API_URL = 'http://127.0.0.1:' + API_PORT;
+const APP_ID = 'mx.asistia.desktop';
+const UPDATE_FORMAT = 'asistia-update-v1';
+const UPDATE_FILES = new Set(['ASISTIA_Control_de_Asistencia.html', 'desktop/desktop-enhancements.js']);
 let mainWindow = null;
 let backendProcess = null;
 let stopping = false;
@@ -102,6 +105,105 @@ ipcMain.handle('asistia:open-data-folder', async () => {
 });
 ipcMain.handle('asistia:version', () => app.getVersion());
 
+function compareVersions(a, b) {
+  const aa = String(a).split('.').map(n => Number.parseInt(n, 10) || 0);
+  const bb = String(b).split('.').map(n => Number.parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(aa.length, bb.length); i++) {
+    const diff = (aa[i] || 0) - (bb[i] || 0);
+    if (diff) return diff > 0 ? 1 : -1;
+  }
+  return 0;
+}
+
+function activeUpdateVersion(updatesDir) {
+  try {
+    const meta = JSON.parse(fs.readFileSync(path.join(updatesDir, 'current', '.asistia-version.json'), 'utf8'));
+    if (typeof meta.version === 'string') return meta.version;
+  } catch {}
+  return app.getVersion();
+}
+
+ipcMain.handle('asistia:install-update', async (_event, rawPackage) => {
+  const updatesDir = path.join(app.getPath('userData'), 'updates');
+  let stagingDir = null;
+  try {
+    if (typeof rawPackage !== 'string' || rawPackage.length > 12 * 1024 * 1024) {
+      throw new Error('El paquete está vacío o supera el límite permitido.');
+    }
+    const pkg = JSON.parse(rawPackage);
+    if (!pkg || pkg.format !== UPDATE_FORMAT || pkg.appId !== APP_ID || typeof pkg.version !== 'string' || !Array.isArray(pkg.files)) {
+      throw new Error('El archivo no corresponde a un paquete oficial de actualización de ASISTIA.');
+    }
+    if (compareVersions(pkg.version, activeUpdateVersion(updatesDir)) <= 0) {
+      throw new Error('La versión ' + pkg.version + ' no es más reciente que la instalada.');
+    }
+    if (pkg.files.length !== UPDATE_FILES.size) {
+      throw new Error('El paquete está incompleto. No se aplicó ningún cambio.');
+    }
+
+    const decoded = [];
+    const seen = new Set();
+    for (const item of pkg.files) {
+      if (!item || typeof item.path !== 'string' || !UPDATE_FILES.has(item.path) || seen.has(item.path)) {
+        throw new Error('El paquete contiene una ruta no permitida o duplicada.');
+      }
+      if (typeof item.contentBase64 !== 'string' || typeof item.sha256 !== 'string') {
+        throw new Error('El paquete contiene un archivo incompleto.');
+      }
+      const bytes = Buffer.from(item.contentBase64, 'base64');
+      if (!bytes.length || bytes.length > 5 * 1024 * 1024) throw new Error('Un archivo del paquete supera el tamaño permitido.');
+      const digest = crypto.createHash('sha256').update(bytes).digest('hex');
+      if (digest !== item.sha256.toLowerCase()) throw new Error('La verificación de integridad falló en ' + item.path + '.');
+      decoded.push({ path: item.path, bytes });
+      seen.add(item.path);
+    }
+    if (!seen.has('ASISTIA_Control_de_Asistencia.html') || !seen.has('desktop/desktop-enhancements.js')) {
+      throw new Error('Faltan componentes obligatorios de la actualización.');
+    }
+
+    fs.mkdirSync(updatesDir, { recursive: true });
+    stagingDir = path.join(updatesDir, '.staging-' + crypto.randomBytes(8).toString('hex'));
+    fs.mkdirSync(stagingDir, { recursive: true });
+    for (const item of decoded) {
+      const destination = path.join(stagingDir, item.path);
+      fs.mkdirSync(path.dirname(destination), { recursive: true });
+      fs.writeFileSync(destination, item.bytes, { flag: 'wx' });
+    }
+    fs.writeFileSync(path.join(stagingDir, '.asistia-version.json'), JSON.stringify({
+      version: pkg.version,
+      installedAt: new Date().toISOString(),
+      format: UPDATE_FORMAT
+    }, null, 2), { flag: 'wx' });
+
+    const currentDir = path.join(updatesDir, 'current');
+    const backupDir = path.join(updatesDir, 'backups');
+    fs.mkdirSync(backupDir, { recursive: true });
+    let backupPath = null;
+    if (fs.existsSync(currentDir)) {
+      const oldVersion = activeUpdateVersion(updatesDir).replace(/[^0-9.]/g, '_');
+      backupPath = path.join(backupDir, oldVersion + '-' + Date.now());
+      fs.renameSync(currentDir, backupPath);
+    }
+    try {
+      fs.renameSync(stagingDir, currentDir);
+      stagingDir = null;
+    } catch (installError) {
+      if (backupPath && fs.existsSync(backupPath) && !fs.existsSync(currentDir)) fs.renameSync(backupPath, currentDir);
+      throw installError;
+    }
+    setImmediate(() => {
+      app.relaunch();
+      app.exit(0);
+    });
+    return { ok: true, version: pkg.version };
+  } catch (error) {
+    if (stagingDir && fs.existsSync(stagingDir)) {
+      try { fs.rmSync(stagingDir, { recursive: true, force: true }); } catch {}
+    }
+    return { ok: false, error: error.message || 'No se pudo instalar la actualización.' };
+  }
+});
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1440,
@@ -119,7 +221,9 @@ function createWindow() {
     }
   });
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  mainWindow.loadFile(path.join(__dirname, '..', 'ASISTIA_Control_de_Asistencia.html'));
+  const bundledHtml = path.join(__dirname, '..', 'ASISTIA_Control_de_Asistencia.html');
+  const updatedHtml = path.join(app.getPath('userData'), 'updates', 'current', 'ASISTIA_Control_de_Asistencia.html');
+  mainWindow.loadFile(fs.existsSync(updatedHtml) ? updatedHtml : bundledHtml);
   mainWindow.on('closed', () => { mainWindow = null; });
 }
 
