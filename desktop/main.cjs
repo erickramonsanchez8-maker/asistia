@@ -137,7 +137,7 @@ ipcMain.handle('asistia:install-update', async (_event, rawPackage, legacyStorag
       throw new Error('El paquete está vacío o supera el límite permitido.');
     }
     const pkg = JSON.parse(rawPackage);
-    if (!pkg || pkg.format !== UPDATE_FORMAT || pkg.appId !== APP_ID || typeof pkg.version !== 'string' || !/^\\d+\\.\\d+\\.\\d+$/.test(pkg.version) || !Array.isArray(pkg.files)) {
+    if (!pkg || pkg.format !== UPDATE_FORMAT || pkg.appId !== APP_ID || typeof pkg.version !== 'string' || !/^\d+\.\d+\.\d+$/.test(pkg.version) || !Array.isArray(pkg.files)) {
       throw new Error('El archivo no corresponde a un paquete oficial de actualización de ASISTIA.');
     }
     if (compareVersions(pkg.version, activeUpdateVersion(updatesDir)) <= 0) {
