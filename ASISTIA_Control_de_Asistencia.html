@@ -768,13 +768,20 @@ function sessionDurationMs(s){
   let end = s.clockOut ? new Date(s.clockOut).getTime() : Date.now();
   if(end < start) end += 24*3600*1000;
   let worked = Math.max(0, end-start);
+  let recordedMealMs = 0;
   (Array.isArray(s.mealBreaks) ? s.mealBreaks : []).forEach(b=>{
     if(!b.mealOutAt) return;
     const mealStart = new Date(b.mealOutAt).getTime();
     let mealEnd = b.mealInAt ? new Date(b.mealInAt).getTime() : Date.now();
     if(mealEnd < mealStart) mealEnd += 24*3600*1000;
-    worked -= Math.max(0, mealEnd-mealStart);
+    recordedMealMs += Math.max(0, mealEnd-mealStart);
   });
+  // New sessions apply the configured automatic rest once. A manually recorded
+  // meal is evidence of that same break, so use the greater duration, never both.
+  const automaticBreakMs = s.autoBreakPolicy === "scheduled-v1" && s.clockOut
+    ? Math.max(0, Number(s.scheduleSnapshot && s.scheduleSnapshot.breakMin) || 0) * 60000
+    : 0;
+  worked -= Math.max(recordedMealMs, automaticBreakMs);
   return Math.max(0, worked);
 }
 function computeLate(s){
@@ -916,6 +923,7 @@ async function punch(emp, pin){
       clockIn: nowIso(),
       clockOut: null,
       scheduleSnapshot: snap,
+      autoBreakPolicy: "scheduled-v1",
       lateMinutes: 0,
       source: "kiosk",
       corrected: false,
@@ -1035,7 +1043,7 @@ function renderSetup(){
       <div class="field"><label>Días de trabajo</label><div class="checks" id="wd">${dayChecks("wd", w.workDays)}</div></div>
       <div class="inline-fields">
         <div class="field"><label>Tolerancia de puntualidad (minutos)</label><input id="tol" type="number" min="0" max="180" value="${w.tolerance}"></div>
-        <div class="field"><label>Descanso (minutos, informativo)</label><input id="br" type="number" min="0" max="240" value="${w.breakMin}"></div>
+        <div class="field"><label>Descanso automático (minutos)</label><input id="br" type="number" min="0" max="240" value="${w.breakMin}"></div>
       </div>
       <label class="check"><input id="ov" type="checkbox" ${w.overnight?"checked":""}> La jornada puede cruzar la medianoche</label>`;
   } else if(ui.wizardStep===3){
@@ -1822,7 +1830,7 @@ function openSchEditor(id){
       </div>
       <div class="inline-fields">
         <div class="field"><label>Tolerancia (min)</label><input type="number" name="toleranceMin" min="0" value="${s.toleranceMin}"></div>
-        <div class="field"><label>Descanso (min)</label><input type="number" name="breakMin" min="0" value="${s.breakMin}"></div>
+        <div class="field"><label>Descanso automático (min)</label><input type="number" name="breakMin" min="0" value="${s.breakMin}"></div>
       </div>
       <label class="check"><input type="checkbox" name="overnight" ${s.overnight?"checked":""}> Cruza la medianoche</label>
       <div class="field"><label>Días</label><div class="checks">${dayChecks("workDays", s.workDays||[])}</div></div>
@@ -2103,6 +2111,14 @@ function viewBackup(){
         <button class="btn btn-warn" id="resetApp">Restablecer aplicación</button>
       </div>
       <p><b>Regla de importación:</b> puede reemplazar todo o fusionar. En fusión, los registros con el mismo identificador se conservan (no se duplican) y se agregan los nuevos.</p>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h3>Actualización de ASISTIA</h3>
+      <p>Instala una actualización desde un archivo oficial sin desinstalar la aplicación ni borrar empleados, horarios o asistencias. ASISTIA verificará la versión y la integridad del paquete, hará una copia de la versión anterior y se reiniciará.</p>
+      <div class="toolbar">
+        <label class="btn btn-navy">Seleccionar archivo de actualización<input type="file" id="asistiaUpdateFile" accept=".asistia-update,.json,application/json" hidden></label>
+      </div>
+      <p class="hint">Esta función requiere ASISTIA Desktop 0.6.0 o posterior. No selecciones archivos de respaldo JSON en esta sección.</p>
     </div>`;
 }
 
@@ -2505,6 +2521,29 @@ function bindSettings(){
   };
 }
 function bindBackup(){
+  const updateInput = document.getElementById("asistiaUpdateFile");
+  if(updateInput) updateInput.onchange = async (ev)=>{
+    const file = ev.target.files && ev.target.files[0];
+    if(!file) return;
+    if(!window.asistiaDesktop || typeof window.asistiaDesktop.installUpdate!=="function"){
+      toast("El actualizador requiere ASISTIA Desktop 0.6.0 o posterior. No se modificó nada.","err");
+      ev.target.value="";
+      return;
+    }
+    let pkg;
+    try{ pkg = JSON.parse(await file.text()); }
+    catch(err){ toast("El archivo de actualización está dañado o no es válido.","err"); ev.target.value=""; return; }
+    if(!pkg || pkg.format!=="asistia-update-v1" || typeof pkg.version!=="string" || !Array.isArray(pkg.files)){
+      toast("El archivo no es un paquete de actualización de ASISTIA.","err"); ev.target.value=""; return;
+    }
+    const ok = await confirmBox("Instalar actualización","Se instalará ASISTIA "+pkg.version+". La aplicación se reiniciará. Los datos locales no se reemplazarán ni se eliminarán.","Instalar actualización");
+    if(!ok){ ev.target.value=""; return; }
+    try{
+      const result = await window.asistiaDesktop.installUpdate(await file.text(), localStorage.getItem(KEY));
+      if(!result || !result.ok) toast((result && result.error)||"No se pudo aplicar la actualización.","err");
+    }catch(err){ toast("No se pudo aplicar la actualización: "+(err.message||"error desconocido"),"err"); }
+    ev.target.value="";
+  };
   document.getElementById("expJson").onclick = ()=>{
     db.meta.lastBackup = nowIso();
     const ok = saveDb();
@@ -2563,16 +2602,25 @@ document.addEventListener("keydown", (e)=>{
   if(e.key==="Escape") closeModal();
 });
 
-try{
-  loadDb();
-  if(typeof localStorage !== "undefined"){
-    const t="__cap_test__"; localStorage.setItem(t,"1"); localStorage.removeItem(t);
+async function bootAsistia(){
+  try{
+    if(typeof localStorage !== "undefined" && !localStorage.getItem(KEY) && window.asistiaDesktop && typeof window.asistiaDesktop.getLegacyStorage==="function"){
+      const legacy = await window.asistiaDesktop.getLegacyStorage();
+      if(typeof legacy==="string" && legacy.length){
+        localStorage.setItem(KEY, legacy);
+      }
+    }
+    loadDb();
+    if(typeof localStorage !== "undefined"){
+      const t="__cap_test__"; localStorage.setItem(t,"1"); localStorage.removeItem(t);
+    }
+  }catch(e){
+    storageOk=false; storageMsg="No se pudieron recuperar o guardar los datos locales. No continúe registrando asistencia hasta restaurar el respaldo.";
+    showStorageBanner();
   }
-}catch(e){
-  storageOk=false; storageMsg="Este navegador no permite guardar datos en el contexto actual. Exporte respaldos y abra el archivo mediante un servidor local sencillo. Consulte LEEME.txt.";
-  showStorageBanner();
+  render();
 }
-render();
+bootAsistia();
 })();
 </script>
 <script src="./desktop/desktop-enhancements.js"></script>
