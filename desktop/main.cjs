@@ -137,7 +137,7 @@ ipcMain.handle('asistia:install-update', async (_event, rawPackage, legacyStorag
       throw new Error('El paquete está vacío o supera el límite permitido.');
     }
     const pkg = JSON.parse(rawPackage);
-    if (!pkg || pkg.format !== UPDATE_FORMAT || pkg.appId !== APP_ID || typeof pkg.version !== 'string' || !Array.isArray(pkg.files)) {
+    if (!pkg || pkg.format !== UPDATE_FORMAT || pkg.appId !== APP_ID || typeof pkg.version !== 'string' || !/^\\d+\\.\\d+\\.\\d+$/.test(pkg.version) || !Array.isArray(pkg.files)) {
       throw new Error('El archivo no corresponde a un paquete oficial de actualización de ASISTIA.');
     }
     if (compareVersions(pkg.version, activeUpdateVersion(updatesDir)) <= 0) {
@@ -167,7 +167,10 @@ ipcMain.handle('asistia:install-update', async (_event, rawPackage, legacyStorag
       throw new Error('Faltan componentes obligatorios de la actualización.');
     }
 
-    if (typeof legacyStorageData === 'string' && legacyStorageData.length <= 8 * 1024 * 1024) {
+    if (typeof legacyStorageData === 'string' && legacyStorageData.length > 8 * 1024 * 1024) {
+      throw new Error('Los datos locales superan el límite seguro de migración. Exporte un respaldo antes de continuar.');
+    }
+    if (typeof legacyStorageData === 'string' && legacyStorageData.length > 0) {
       const legacyFile = path.join(app.getPath('userData'), 'legacy-browser-storage.json');
       const legacyTemp = legacyFile + '.tmp';
       fs.mkdirSync(path.dirname(legacyFile), { recursive: true });
