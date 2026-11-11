@@ -104,6 +104,12 @@ ipcMain.handle('asistia:open-data-folder', async () => {
   return location;
 });
 ipcMain.handle('asistia:version', () => app.getVersion());
+ipcMain.handle('asistia:legacy-storage', () => {
+  try {
+    const saved = JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), 'legacy-browser-storage.json'), 'utf8'));
+    return typeof saved.value === 'string' ? saved.value : null;
+  } catch { return null; }
+});
 
 function compareVersions(a, b) {
   const aa = String(a).split('.').map(n => Number.parseInt(n, 10) || 0);
@@ -123,7 +129,7 @@ function activeUpdateVersion(updatesDir) {
   return app.getVersion();
 }
 
-ipcMain.handle('asistia:install-update', async (_event, rawPackage) => {
+ipcMain.handle('asistia:install-update', async (_event, rawPackage, legacyStorageData) => {
   const updatesDir = path.join(app.getPath('userData'), 'updates');
   let stagingDir = null;
   try {
@@ -159,6 +165,14 @@ ipcMain.handle('asistia:install-update', async (_event, rawPackage) => {
     }
     if (!seen.has('ASISTIA_Control_de_Asistencia.html') || !seen.has('desktop/desktop-enhancements.js')) {
       throw new Error('Faltan componentes obligatorios de la actualización.');
+    }
+
+    if (typeof legacyStorageData === 'string' && legacyStorageData.length <= 8 * 1024 * 1024) {
+      const legacyFile = path.join(app.getPath('userData'), 'legacy-browser-storage.json');
+      const legacyTemp = legacyFile + '.tmp';
+      fs.mkdirSync(path.dirname(legacyFile), { recursive: true });
+      fs.writeFileSync(legacyTemp, JSON.stringify({ key: 'control_asistencia_pro_v1', value: legacyStorageData, savedAt: new Date().toISOString() }), { flag: 'w' });
+      fs.renameSync(legacyTemp, legacyFile);
     }
 
     fs.mkdirSync(updatesDir, { recursive: true });
