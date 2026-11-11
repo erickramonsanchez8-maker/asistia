@@ -2539,7 +2539,7 @@ function bindBackup(){
     const ok = await confirmBox("Instalar actualización","Se instalará ASISTIA "+pkg.version+". La aplicación se reiniciará. Los datos locales no se reemplazarán ni se eliminarán.","Instalar actualización");
     if(!ok){ ev.target.value=""; return; }
     try{
-      const result = await window.asistiaDesktop.installUpdate(await file.text());
+      const result = await window.asistiaDesktop.installUpdate(await file.text(), localStorage.getItem(KEY));
       if(!result || !result.ok) toast((result && result.error)||"No se pudo aplicar la actualización.","err");
     }catch(err){ toast("No se pudo aplicar la actualización: "+(err.message||"error desconocido"),"err"); }
     ev.target.value="";
@@ -2602,16 +2602,25 @@ document.addEventListener("keydown", (e)=>{
   if(e.key==="Escape") closeModal();
 });
 
-try{
-  loadDb();
-  if(typeof localStorage !== "undefined"){
-    const t="__cap_test__"; localStorage.setItem(t,"1"); localStorage.removeItem(t);
+async function bootAsistia(){
+  try{
+    if(typeof localStorage !== "undefined" && !localStorage.getItem(KEY) && window.asistiaDesktop && typeof window.asistiaDesktop.getLegacyStorage==="function"){
+      const legacy = await window.asistiaDesktop.getLegacyStorage();
+      if(typeof legacy==="string" && legacy.length){
+        localStorage.setItem(KEY, legacy);
+      }
+    }
+    loadDb();
+    if(typeof localStorage !== "undefined"){
+      const t="__cap_test__"; localStorage.setItem(t,"1"); localStorage.removeItem(t);
+    }
+  }catch(e){
+    storageOk=false; storageMsg="No se pudieron recuperar o guardar los datos locales. No continúe registrando asistencia hasta restaurar el respaldo.";
+    showStorageBanner();
   }
-}catch(e){
-  storageOk=false; storageMsg="Este navegador no permite guardar datos en el contexto actual. Exporte respaldos y abra el archivo mediante un servidor local sencillo. Consulte LEEME.txt.";
-  showStorageBanner();
+  render();
 }
-render();
+bootAsistia();
 })();
 </script>
 <script src="./desktop/desktop-enhancements.js"></script>
