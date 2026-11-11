@@ -94,7 +94,7 @@ ipcMain.handle('asistia:health', async () => {
     if (!response.ok) throw new Error('Servicio local no disponible');
     return await response.json();
   } catch {
-    return { status: 'offline', database: 'unknown', service: 'ASISTIA local', version: '0.5.0' };
+    return { status: 'offline', database: 'unknown', service: 'ASISTIA local', version: app.getVersion() };
   }
 });
 
