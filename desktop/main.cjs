@@ -94,7 +94,7 @@ ipcMain.handle('asistia:health', async () => {
     if (!response.ok) throw new Error('Servicio local no disponible');
     return await response.json();
   } catch {
-    return { status: 'offline', database: 'unknown', service: 'ASISTIA local', version: app.getVersion() };
+    return { status: 'offline', database: 'unknown', service: 'ASISTIA local', version: activeUpdateVersion(path.join(app.getPath('userData'), 'updates')) };
   }
 });
 
@@ -103,7 +103,7 @@ ipcMain.handle('asistia:open-data-folder', async () => {
   await shell.openPath(location);
   return location;
 });
-ipcMain.handle('asistia:version', () => app.getVersion());
+ipcMain.handle('asistia:version', () => activeUpdateVersion(path.join(app.getPath('userData'), 'updates')));
 ipcMain.handle('asistia:legacy-storage', () => {
   try {
     const saved = JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), 'legacy-browser-storage.json'), 'utf8'));
