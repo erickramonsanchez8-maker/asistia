@@ -778,7 +778,7 @@ function sessionDurationMs(s){
   });
   // New sessions apply the configured automatic rest once. A manually recorded
   // meal is evidence of that same break, so use the greater duration, never both.
-  const automaticBreakMs = s.autoBreakPolicy === "scheduled-v1"
+  const automaticBreakMs = s.autoBreakPolicy === "scheduled-v1" && s.clockOut
     ? Math.max(0, Number(s.scheduleSnapshot && s.scheduleSnapshot.breakMin) || 0) * 60000
     : 0;
   worked -= Math.max(recordedMealMs, automaticBreakMs);
