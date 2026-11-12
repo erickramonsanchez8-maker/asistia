@@ -776,11 +776,10 @@ function sessionDurationMs(s){
     if(mealEnd < mealStart) mealEnd += 24*3600*1000;
     recordedMealMs += Math.max(0, mealEnd-mealStart);
   });
-  // New sessions apply the configured automatic rest once. A manually recorded
-  // meal is evidence of that same break, so use the greater duration, never both.
-  const automaticBreakMs = s.autoBreakPolicy === "scheduled-v1" && s.clockOut
-    ? Math.max(0, Number(s.scheduleSnapshot && s.scheduleSnapshot.breakMin) || 0) * 60000
-    : 0;
+  // Every completed workday receives one automatic 60-minute break deduction.
+  // If a longer meal was explicitly recorded, use that duration instead (never double-count).
+  // This also applies to existing sessions created before the automatic-break policy was added.
+  const automaticBreakMs = s.clockOut ? 60 * 60000 : 0;
   worked -= Math.max(recordedMealMs, automaticBreakMs);
   return Math.max(0, worked);
 }
