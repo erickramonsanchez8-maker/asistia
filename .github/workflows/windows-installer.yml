@@ -51,9 +51,9 @@ jobs:
           const pkg = {
             format: 'asistia-update-v1',
             appId: 'mx.asistia.desktop',
-            version: '0.6.1',
+            version: '0.6.2',
             releaseNotes: [
-              'Descuento automático del descanso configurado en el horario.',
+              'Descuento automático fijo de 60 minutos en toda jornada cerrada, también para registros anteriores.',
               'Actualizador interno con validación de integridad y respaldo de la versión anterior.'
             ],
             files: files.map(file => {
@@ -66,7 +66,7 @@ jobs:
             })
           };
           fs.mkdirSync('release', { recursive: true });
-          fs.writeFileSync('release/ASISTIA-Update-v0.6.1.asistia-update', JSON.stringify(pkg));
+          fs.writeFileSync('release/ASISTIA-Update-v0.6.2.asistia-update', JSON.stringify(pkg));
           '@ | node
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
@@ -78,7 +78,7 @@ jobs:
       - name: Upload in-app update package
         uses: actions/upload-artifact@v4
         with:
-          name: ASISTIA-Update-v0.6.1
+          name: ASISTIA-Update-v0.6.2
           path: release/*.asistia-update
           if-no-files-found: error
           retention-days: 30
