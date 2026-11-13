@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('asistiaDesktop', Object.freeze({
   trialStatus: () => ipcRenderer.invoke('asistia:trial-status'),
+  openActivationWhatsApp: () => ipcRenderer.invoke('asistia:open-activation-whatsapp'),
   health: () => ipcRenderer.invoke('asistia:health'),
   openDataFolder: () => ipcRenderer.invoke('asistia:open-data-folder'),
   version: () => ipcRenderer.invoke('asistia:version'),
