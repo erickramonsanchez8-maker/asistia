@@ -4,9 +4,11 @@ Aplicación de escritorio local con actualizaciones internas por paquete, sin el
 
 Aplicación de control de asistencia para Windows, con funcionamiento local y sin necesidad de contratar un servidor externo.
 
-## Versión 0.6.0
+## Versión 0.6.1
 
 - Aplicación de escritorio Electron con instalador NSIS de 64 bits.
+- Periodo de demostración de 15 días desde el primer inicio, con aviso de vigencia y bloqueo al vencer.
+- El bloqueo de demostración conserva los datos locales; la activación comercial mediante licencia se incorporará en una siguiente actualización.
 - El servicio API local se incluye en el mismo instalador y se inicia junto con la aplicación en `127.0.0.1:43177`.
 - La base SQLite del servicio local se almacena en la carpeta de datos de ASISTIA del usuario de Windows.
 - La interfaz heredada conserva los datos de asistencia en almacenamiento local; no se realiza una migración automática de esos registros a la base SQLite de la API.
@@ -17,13 +19,13 @@ Aplicación de control de asistencia para Windows, con funcionamiento local y si
 
 ## Actualizaciones
 
-La versión 0.6.0 incorpora por primera vez el mecanismo de actualización interna. Para equipos que todavía usan 0.5.0 se requiere una actualización inicial ejecutando el instalador 0.6.0 sobre la instalación existente (sin desinstalar). El instalador NSIS conserva la carpeta de datos del usuario (`deleteAppDataOnUninstall: false`). Después, las versiones posteriores se distribuyen como un único archivo `.asistia-update`: desde **Respaldos y recuperación → Actualización de ASISTIA**, se selecciona el archivo y la aplicación valida versión, rutas permitidas y SHA-256 antes de reiniciarse. La copia de seguridad de datos del navegador se conserva para migrar el almacenamiento local cuando cambia la ruta del HTML; los paquetes anteriores quedan guardados para recuperación.
+La versión 0.6.1 conserva el mecanismo de actualización interna. Para equipos que todavía usan 0.5.0 se requiere una actualización inicial ejecutando el instalador 0.6.0 sobre la instalación existente (sin desinstalar). El instalador NSIS conserva la carpeta de datos del usuario (`deleteAppDataOnUninstall: false`). Después, las versiones posteriores se distribuyen como un único archivo `.asistia-update`: desde **Respaldos y recuperación → Actualización de ASISTIA**, se selecciona el archivo y la aplicación valida versión, rutas permitidas y SHA-256 antes de reiniciarse. La copia de seguridad de datos del navegador se conserva para migrar el almacenamiento local cuando cambia la ruta del HTML; los paquetes anteriores quedan guardados para recuperación.
 
 El paquete de actualización se limita a la interfaz HTML y sus mejoras de escritorio; cambios al proceso principal de Electron o al servicio local requieren un instalador de escritorio nuevo.
 
 ## Compilar el instalador
 
-El flujo `.github/workflows/windows-installer.yml` construye el instalador en un runner de Windows y publica el archivo `ASISTIA-Setup-v0.5.0-x64` como artefacto de GitHub Actions.
+El flujo `.github/workflows/windows-installer.yml` construye el instalador en un runner de Windows y publica el archivo `ASISTIA-Setup-v0.6.1-x64` como artefacto de GitHub Actions.
 
 Para compilar manualmente en Windows con Node.js 20:
 
