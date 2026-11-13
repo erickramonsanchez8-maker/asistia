@@ -134,6 +134,12 @@ async function startLocalBackend() {
 }
 
 ipcMain.handle('asistia:trial-status', () => getTrialStatus());
+ipcMain.handle('asistia:open-activation-whatsapp', async () => {
+  const message = "Hola, quiero activar ASISTIA.\nNombre del negocio:\nNúmero de sucursales:\nPlan: Mensual / Anual.";
+  const activationUrl = 'https://wa.me/523123603551?text=' + encodeURIComponent(message);
+  await shell.openExternal(activationUrl);
+  return { ok: true };
+});
 
 ipcMain.handle('asistia:health', async () => {
   try {
