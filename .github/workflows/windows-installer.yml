@@ -51,9 +51,10 @@ jobs:
           const pkg = {
             format: 'asistia-update-v1',
             appId: 'mx.asistia.desktop',
-            version: '0.6.1',
+            version: '0.6.2',
             releaseNotes: [
-              'Descuento automático del descanso configurado en el horario.',
+              'Prueba de demostración de 15 días con bloqueo automático al vencer.',
+              'Aviso visible de los días restantes y conservación de los datos locales.',
               'Actualizador interno con validación de integridad y respaldo de la versión anterior.'
             ],
             files: files.map(file => {
@@ -66,19 +67,19 @@ jobs:
             })
           };
           fs.mkdirSync('release', { recursive: true });
-          fs.writeFileSync('release/ASISTIA-Update-v0.6.1.asistia-update', JSON.stringify(pkg));
+          fs.writeFileSync('release/ASISTIA-Update-v0.6.2.asistia-update', JSON.stringify(pkg));
           '@ | node
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
         with:
-          name: ASISTIA-Setup-v0.6.0-x64
+          name: ASISTIA-Setup-v0.6.1-x64
           path: release/*.exe
           if-no-files-found: error
           retention-days: 30
       - name: Upload in-app update package
         uses: actions/upload-artifact@v4
         with:
-          name: ASISTIA-Update-v0.6.1
+          name: ASISTIA-Update-v0.6.2
           path: release/*.asistia-update
           if-no-files-found: error
           retention-days: 30
