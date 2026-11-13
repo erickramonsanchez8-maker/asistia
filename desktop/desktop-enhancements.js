@@ -20,6 +20,7 @@
       .asistia-trial-brand{margin:0 0 10px;color:#72d9e5;font-size:11px;font-weight:800;letter-spacing:.2em}
       .asistia-trial-panel h1{margin:0 0 12px;color:#fff;font-size:clamp(25px,5vw,34px);letter-spacing:-.04em}
       .asistia-trial-panel p{margin:0;color:#c6d4e3;font-size:15px;line-height:1.7}
+      .asistia-trial-whatsapp{display:inline-flex;align-items:center;justify-content:center;gap:10px;margin-top:24px;padding:14px 22px;border:0;border-radius:12px;background:#25d366;color:#062b19;font:800 14px/1.2 "Segoe UI",sans-serif;text-decoration:none;cursor:pointer;box-shadow:0 10px 28px rgba(37,211,102,.2);transition:transform .18s ease,filter .18s ease}.asistia-trial-whatsapp:hover{filter:brightness(1.06);transform:translateY(-1px)}
       .asistia-trial-note{margin-top:24px!important;padding-top:18px;border-top:1px solid rgba(255,255,255,.13);font-size:13px!important;color:#8fa8c0!important}
       body.asistia-trial-locked{overflow:hidden}
       @media(max-width:600px){.asistia-trial-panel{padding:32px 22px}.asistia-trial-badge{font-size:0;padding:8px}.asistia-trial-badge span{font-size:10px}}
@@ -91,7 +92,14 @@
     const extra = status.clockRollback
       ? 'Se detectó un cambio hacia atrás en la fecha del equipo. La prueba quedó cerrada por seguridad.'
       : 'Para continuar utilizando ASISTIA, solicita una licencia a la persona que te proporcionó esta demostración.';
-    overlay.innerHTML = '<div class="asistia-trial-panel"><div class="asistia-trial-lock" aria-hidden="true">🔒</div><div class="asistia-trial-brand">ASISTIA · CONTROL DE ASISTENCIA</div><h1 id="asistiaTrialTitle">Tu periodo de prueba terminó</h1><p>Los 15 días de demostración han concluido. El acceso a los registros y operaciones está bloqueado hasta activar una licencia.</p><p class="asistia-trial-note">' + extra + '<br>Tu información permanece guardada en este equipo.</p></div>';
+    overlay.innerHTML = '<div class="asistia-trial-panel"><div class="asistia-trial-lock" aria-hidden="true">🔒</div><div class="asistia-trial-brand">ASISTIA · CONTROL DE ASISTENCIA</div><h1 id="asistiaTrialTitle">Tu periodo de prueba terminó</h1><p>Los 15 días de demostración han concluido. El acceso a los registros y operaciones está bloqueado hasta activar una licencia.</p><button type="button" class="asistia-trial-whatsapp" id="asistiaTrialWhatsApp">Contactar por WhatsApp para activar</button><p class="asistia-trial-note">' + extra + '<br>Tu información permanece guardada en este equipo.</p></div>';
+    overlay.querySelector('#asistiaTrialWhatsApp').addEventListener('click', async () => {
+      try {
+        await window.asistiaDesktop?.openActivationWhatsApp?.();
+      } catch {
+        window.location.href = 'https://wa.me/523123603551?text=Hola%2C%20quiero%20activar%20ASISTIA.%0ANombre%20del%20negocio%3A%0AN%C3%BAmero%20de%20sucursales%3A%0APlan%3A%20Mensual%20%2F%20Anual.';
+      }
+    });
     document.body.appendChild(overlay);
   };
 
