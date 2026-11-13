@@ -44,6 +44,51 @@ function loadOrCreateSecret() {
   return jwtSecret;
 }
 
+const TRIAL_DAYS = 15;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function getTrialStatus() {
+  const dir = app.getPath('userData');
+  const file = path.join(dir, 'trial-period.json');
+  fs.mkdirSync(dir, { recursive: true });
+  const now = Date.now();
+  let state;
+
+  try {
+    state = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (!state || !Number.isFinite(state.startedAt) || !Number.isFinite(state.expiresAt) || !Number.isFinite(state.lastSeenAt)) {
+      throw new Error('Estado de prueba inválido');
+    }
+  } catch (error) {
+    if (fs.existsSync(file)) {
+      state = { startedAt: now, expiresAt: now, lastSeenAt: now, expired: true, integrityError: true };
+    } else {
+      state = { startedAt: now, expiresAt: now + TRIAL_DAYS * DAY_MS, lastSeenAt: now, expired: false };
+    }
+  }
+
+  if (now < state.lastSeenAt - 5 * 60 * 1000) {
+    state.expired = true;
+    state.clockRollback = true;
+  }
+  if (now >= state.expiresAt) state.expired = true;
+  state.lastSeenAt = Math.max(now, state.lastSeenAt);
+  const temp = file + '.tmp';
+  fs.writeFileSync(temp, JSON.stringify(state, null, 2), { mode: 0o600 });
+  try { if (fs.existsSync(file)) fs.unlinkSync(file); } catch {}
+  fs.renameSync(temp, file);
+
+  const daysRemaining = state.expired ? 0 : Math.max(0, Math.ceil((state.expiresAt - now) / DAY_MS));
+  return {
+    expired: Boolean(state.expired),
+    daysRemaining,
+    startedAt: new Date(state.startedAt).toISOString(),
+    expiresAt: new Date(state.expiresAt).toISOString(),
+    clockRollback: Boolean(state.clockRollback),
+    integrityError: Boolean(state.integrityError)
+  };
+}
+
 async function waitForLocalApi(timeoutMs = 12000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline && !stopping) {
@@ -87,6 +132,8 @@ async function startLocalBackend() {
   backendProcess.on('exit', () => { backendProcess = null; });
   return await waitForLocalApi();
 }
+
+ipcMain.handle('asistia:trial-status', () => getTrialStatus());
 
 ipcMain.handle('asistia:health', async () => {
   try {
@@ -255,6 +302,7 @@ if (!hasLock) {
     }
   });
   app.whenReady().then(async () => {
+    getTrialStatus();
     await startLocalBackend();
     createWindow();
     app.on('activate', () => {
@@ -264,6 +312,7 @@ if (!hasLock) {
 }
 
 app.on('before-quit', () => {
+  try { getTrialStatus(); } catch {}
   stopping = true;
   if (backendProcess && !backendProcess.killed) {
     try { backendProcess.kill(); } catch {}
