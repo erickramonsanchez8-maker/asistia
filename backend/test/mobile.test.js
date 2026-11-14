@@ -403,3 +403,88 @@ test('los registros GPS válidos se guardan en la bitácora canónica de la API'
   assert.equal('latitude' in recent.data.records[0], false);
   assert.equal('longitude' in recent.data.records[0], false);
 });
+
+
+test('el quiosco de escritorio escribe en el mismo historial central que ASISTIA Móvil', async () => {
+  const employee = {
+    id: 'emp_desktop_bridge_001',
+    fullName: 'Empleado Escritorio',
+    employeeNumber: 'DSK-001',
+    branch: 'Principal',
+    active: true
+  };
+  const synced = await request('/api/desktop/sync-employees', {
+    method: 'POST',
+    bridgeToken: desktopBridgeToken,
+    body: [employee]
+  });
+  assert.equal(synced.status, 200, JSON.stringify(synced.data));
+
+  const clockIn = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+  const clockOut = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const entry = await request('/api/desktop/record-attendance', {
+    method: 'POST',
+    bridgeToken: desktopBridgeToken,
+    body: { ...employee, eventType: 'clock_in', occurredAt: clockIn }
+  });
+  assert.equal(entry.status, 201, JSON.stringify(entry.data));
+  assert.equal(entry.data.event.source, 'kiosk');
+  const exit = await request('/api/desktop/record-attendance', {
+    method: 'POST',
+    bridgeToken: desktopBridgeToken,
+    body: { ...employee, eventType: 'clock_out', occurredAt: clockOut }
+  });
+  assert.equal(exit.status, 201, JSON.stringify(exit.data));
+
+  const history = await request('/api/attendance/events', { token: adminToken });
+  const desktopEvents = history.data.events.filter(event => event.employeeId === employee.id);
+  assert.equal(desktopEvents.length, 2);
+  assert.deepEqual(desktopEvents.map(event => event.eventType).sort(), ['clock_in', 'clock_out']);
+
+  const unified = await request('/api/desktop/mobile-events', { bridgeToken: desktopBridgeToken });
+  const unifiedEvents = unified.data.events.filter(event => event.employeeId === employee.id);
+  assert.equal(unifiedEvents.length, 2);
+  assert.ok(unifiedEvents.every(event => event.source === 'kiosk'));
+});
+
+test('la importación de jornadas existentes conserva historial y es idempotente', async () => {
+  const employee = {
+    id: 'emp_legacy_import_001',
+    fullName: 'Empleado Histórico',
+    employeeNumber: 'OLD-001',
+    branch: 'Principal',
+    active: true
+  };
+  const synced = await request('/api/desktop/sync-employees', {
+    method: 'POST',
+    bridgeToken: desktopBridgeToken,
+    body: [employee]
+  });
+  assert.equal(synced.status, 200, JSON.stringify(synced.data));
+
+  const clockIn = new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString();
+  const clockOut = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString();
+  const payload = [{ id: 'legacy-session-001', employeeId: employee.id, clockIn, clockOut }];
+  const first = await request('/api/desktop/sync-sessions', {
+    method: 'POST',
+    bridgeToken: desktopBridgeToken,
+    body: payload
+  });
+  assert.equal(first.status, 200, JSON.stringify(first.data));
+  assert.equal(first.data.imported, 2);
+  assert.equal(first.data.skipped, 0);
+
+  const second = await request('/api/desktop/sync-sessions', {
+    method: 'POST',
+    bridgeToken: desktopBridgeToken,
+    body: payload
+  });
+  assert.equal(second.status, 200, JSON.stringify(second.data));
+  assert.equal(second.data.imported, 0);
+  assert.equal(second.data.skipped, 0);
+
+  const history = await request('/api/attendance/events', { token: adminToken });
+  const imported = history.data.events.filter(event => event.employeeId === employee.id);
+  assert.equal(imported.length, 2);
+  assert.ok(imported.every(event => event.source === 'legacy_migration'));
+});
