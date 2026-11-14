@@ -222,6 +222,20 @@ test('la configuración de sucursal puede administrarse desde el instalador loca
     }
   });
   assert.equal(rejected.status, 400);
+
+  const restoreLocalTestNetwork = await request('/api/mobile/settings', {
+    method: 'PUT',
+    token: adminToken,
+    body: {
+      branch: 'Principal',
+      latitude: 19.7,
+      longitude: -103.46,
+      radiusM: 50,
+      maxAccuracyM: 50,
+      allowedCidrs: ['127.0.0.0/8']
+    }
+  });
+  assert.equal(restoreLocalTestNetwork.status, 200);
 });
 test('la cuenta de trabajador solo recibe su expediente y política de ubicación', async () => {
   const profile = await request('/api/mobile/me', { token: workerToken });
