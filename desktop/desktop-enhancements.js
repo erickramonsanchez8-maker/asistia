@@ -33,7 +33,18 @@
       .asistia-mobile-credential strong{display:block;color:#0b1d33;font-size:16px;overflow-wrap:anywhere;user-select:all}
       .asistia-mobile-actions{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:8px;margin-top:18px}
       .asistia-mobile-panel{margin:14px 0 18px;padding:18px}
-      .asistia-mobile-list{display:grid;gap:8px;margin-top:12px}
+      .asistia-mobile-settings-dialog{width:min(94vw,620px);max-height:90vh;overflow:auto;border:1px solid #dce5ee;border-radius:20px;padding:26px;color:#172638;box-shadow:0 24px 80px rgba(5,22,40,.3)}
+      .asistia-mobile-settings-dialog::backdrop{background:rgba(5,18,32,.58);backdrop-filter:blur(5px)}
+      .asistia-mobile-settings-dialog h2{margin:0 0 7px;color:#0b1d33}
+      .asistia-mobile-settings-dialog p{color:#647589;font-size:12px;line-height:1.55}
+      .asistia-mobile-settings-dialog .asistia-settings-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+      .asistia-mobile-settings-dialog label{display:block;margin:12px 0 6px;color:#405166;font-size:12px;font-weight:750}
+      .asistia-mobile-settings-dialog input{width:100%;min-height:44px;padding:0 12px;border:1px solid #dce4ed;border-radius:10px}
+      .asistia-mobile-settings-dialog button{padding:10px 14px;border:0;border-radius:10px;cursor:pointer}
+      .asistia-mobile-settings-dialog .asistia-settings-save{background:#123b62;color:#fff;font-weight:800}
+      .asistia-mobile-settings-dialog .asistia-settings-secondary{background:#eef3f8;color:#234463}
+      .asistia-mobile-settings-dialog .asistia-mobile-actions{justify-content:space-between}
+      @media(max-width:560px){.asistia-mobile-settings-dialog .asistia-settings-grid{grid-template-columns:1fr}}      .asistia-mobile-list{display:grid;gap:8px;margin-top:12px}
       .asistia-mobile-item{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 12px;border:1px solid #e8edf2;border-radius:12px;background:#fbfcfe}
       .asistia-mobile-item strong{display:block;color:#142b43;font-size:13px}
       .asistia-mobile-item small{display:block;color:#748398;font-size:11px;margin-top:3px}
@@ -236,6 +247,101 @@
     });
   };
 
+  const openMobileSettings = async () => {
+    if (!window.asistiaDesktop?.getMobileSettings || !window.asistiaDesktop?.getMobileNetworkInfo) {
+      window.alert('No está disponible el servicio local de ASISTIA.');
+      return;
+    }
+    try {
+      const [current, network] = await Promise.all([
+        window.asistiaDesktop.getMobileSettings('Principal'),
+        window.asistiaDesktop.getMobileNetworkInfo()
+      ]);
+      const saved = current?.settings || {};
+      const candidates = network?.candidates || [];
+      const suggestedCidr = saved.allowedCidrs?.[0] || candidates[0]?.cidr || '';
+      const dialog = document.createElement('dialog');
+      dialog.className = 'asistia-mobile-settings-dialog';
+      dialog.innerHTML = `
+        <h2>Configurar ASISTIA Móvil</h2>
+        <p>Define dónde está la sucursal y qué red Wi-Fi puede registrar asistencia. Esta configuración se guarda en el servicio local de ASISTIA.</p>
+        <form id="asistiaMobileSettingsForm">
+          <label for="asistiaMobileBranch">Sucursal</label>
+          <input id="asistiaMobileBranch" value="Principal" maxlength="100" required>
+          <div class="asistia-settings-grid">
+            <div><label for="asistiaMobileLat">Latitud del establecimiento</label><input id="asistiaMobileLat" type="number" step="any" min="-90" max="90" required></div>
+            <div><label for="asistiaMobileLon">Longitud del establecimiento</label><input id="asistiaMobileLon" type="number" step="any" min="-180" max="180" required></div>
+          </div>
+          <button type="button" id="asistiaMobileLocate" class="asistia-settings-secondary">Usar ubicación de esta computadora</button>
+          <div class="asistia-settings-grid">
+            <div><label for="asistiaMobileRadius">Radio permitido (metros)</label><input id="asistiaMobileRadius" type="number" min="10" max="500" step="1" value="50" required></div>
+            <div><label for="asistiaMobileAccuracy">Precisión GPS máxima (metros)</label><input id="asistiaMobileAccuracy" type="number" min="5" max="100" step="1" value="50" required></div>
+          </div>
+          <label for="asistiaMobileCidr">Red Wi-Fi autorizada (IPv4 CIDR)</label>
+          <input id="asistiaMobileCidr" list="asistiaMobileCidrs" maxlength="20" placeholder="192.168.1.0/24" required>
+          <datalist id="asistiaMobileCidrs"></datalist>
+          <p id="asistiaMobileNetworkHint">Redes privadas detectadas en esta computadora: ${candidates.map(item=>item.address+' ('+item.cidr+')').join(', ') || 'ninguna'}. Selecciona el rango que usan los teléfonos de los empleados.</p>
+          <p>El teléfono tendrá que estar conectado a esta red y dentro del radio GPS. No se habilitan redes públicas ni acceso desde Internet.</p>
+          <div class="asistia-mobile-actions">
+            <button type="button" class="asistia-settings-secondary" id="asistiaMobileSettingsClose">Cancelar</button>
+            <button type="submit" class="asistia-settings-save">Guardar configuración</button>
+          </div>
+        </form>`;
+      dialog.querySelector('#asistiaMobileLat').value = saved.latitude ?? '';
+      dialog.querySelector('#asistiaMobileLon').value = saved.longitude ?? '';
+      dialog.querySelector('#asistiaMobileRadius').value = saved.radiusM ?? 50;
+      dialog.querySelector('#asistiaMobileAccuracy').value = saved.maxAccuracyM ?? 50;
+      dialog.querySelector('#asistiaMobileCidr').value = suggestedCidr;
+      const datalist = dialog.querySelector('#asistiaMobileCidrs');
+      candidates.forEach(item => {
+        const option = document.createElement('option');
+        option.value = item.cidr;
+        option.label = item.name + ' · ' + item.address;
+        datalist.appendChild(option);
+      });
+      dialog.querySelector('#asistiaMobileLocate').addEventListener('click', () => {
+        if (!navigator.geolocation) { window.alert('Esta computadora no permite consultar la ubicación. Captura las coordenadas manualmente.'); return; }
+        navigator.geolocation.getCurrentPosition(position => {
+          dialog.querySelector('#asistiaMobileLat').value = position.coords.latitude.toFixed(7);
+          dialog.querySelector('#asistiaMobileLon').value = position.coords.longitude.toFixed(7);
+        }, () => window.alert('No se pudo obtener la ubicación de esta computadora. Permite el acceso o captura las coordenadas manualmente.'), {
+          enableHighAccuracy: true, timeout: 15000, maximumAge: 0
+        });
+      });
+      dialog.querySelector('#asistiaMobileSettingsClose').addEventListener('click', () => dialog.close());
+      dialog.querySelector('#asistiaMobileSettingsForm').addEventListener('submit', async event => {
+        event.preventDefault();
+        const saveButton = dialog.querySelector('[type="submit"]');
+        saveButton.disabled = true;
+        saveButton.textContent = 'Guardando…';
+        try {
+          const body = {
+            branch: dialog.querySelector('#asistiaMobileBranch').value.trim(),
+            latitude: Number(dialog.querySelector('#asistiaMobileLat').value),
+            longitude: Number(dialog.querySelector('#asistiaMobileLon').value),
+            radiusM: Number(dialog.querySelector('#asistiaMobileRadius').value),
+            maxAccuracyM: Number(dialog.querySelector('#asistiaMobileAccuracy').value),
+            allowedCidrs: [dialog.querySelector('#asistiaMobileCidr').value.trim()]
+          };
+          const result = await window.asistiaDesktop.saveMobileSettings(body);
+          if (!result?.ok) throw new Error('No se pudo guardar la configuración.');
+          dialog.close();
+          window.alert('ASISTIA Móvil quedó configurado para la sucursal ' + body.branch + '. La conexión HTTPS y el certificado de los teléfonos aún deben habilitarse antes de registrar asistencia real.');
+          refreshMobileActivity();
+        } catch (error) {
+          window.alert(error?.message || 'No se pudo guardar la configuración.');
+          saveButton.disabled = false;
+          saveButton.textContent = 'Guardar configuración';
+        }
+      });
+      dialog.addEventListener('close', () => dialog.remove(), { once: true });
+      document.body.appendChild(dialog);
+      dialog.showModal();
+    } catch(error) {
+      window.alert(error?.message || 'No se pudo cargar la configuración móvil.');
+    }
+  };
+
   const refreshMobileActivity = async () => {
     if (mobileActivityInFlight || !window.asistiaDesktop?.getMobileRecent) return;
     const heading = [...appRoot.querySelectorAll('h2')].find(node => node.textContent.trim() === 'Resumen general');
@@ -246,7 +352,8 @@
       panel = document.createElement('section');
       panel.id = 'asistiaMobileActivity';
       panel.className = 'card asistia-mobile-panel';
-      panel.innerHTML = '<div class="page-head"><div><h3>Registros móviles recientes</h3><p class="hint">Eventos recibidos en la base local de ASISTIA.</p></div><span class="badge badge-info">Wi-Fi local</span></div><div class="asistia-mobile-list" id="asistiaMobileList"><p class="hint">Consultando registros…</p></div>';
+      panel.innerHTML = '<div class="page-head"><div><h3>Registros móviles recientes</h3><p class="hint">Eventos recibidos en la base local de ASISTIA.</p></div><div><span class="badge badge-info">Wi-Fi local</span> <button type="button" class="btn btn-ghost btn-sm" id="asistiaMobileSettings">Configurar móvil</button></div></div><div class="asistia-mobile-list" id="asistiaMobileList"><p class="hint">Consultando registros…</p></div>';
+      panel.querySelector('#asistiaMobileSettings').addEventListener('click', openMobileSettings);
       pageHead.insertAdjacentElement('afterend', panel);
     }
     mobileActivityInFlight = true;
