@@ -75,7 +75,7 @@ async function login(event) {
   try {
     const result = await api('/api/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ email: el('email').value.trim(), password: el('password').value })
+      body: JSON.stringify({ employeeNumber: el('employee-number').value.trim(), password: el('password').value })
     });
     if (!result.user || result.user.role !== 'worker') throw new Error('Esta aplicación es solo para cuentas de trabajador.');
     state.token = result.token;
