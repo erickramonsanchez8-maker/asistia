@@ -105,7 +105,7 @@ function writeAudit(companyId, actorId, action, entityType, entityId, details = 
   const hash = createHash('sha256').update(payload).digest('hex');
   audit.run(id, companyId, actorId, action, entityType, entityId, JSON.stringify(details), created, prev, hash);
 }
-function writeEvent({companyId, employeeId, eventType, occurredAt, source, createdBy}) {
+function writeEvent({companyId, employeeId, eventType, occurredAt, source, createdBy, id = randomUUID()}) {
   const prev = db.prepare('SELECT event_hash FROM attendance_events WHERE company_id=? ORDER BY rowid DESC LIMIT 1').get(companyId)?.event_hash || null;
   const receivedAt = now();
   const id = randomUUID();
@@ -393,6 +393,85 @@ const desktopMobileEmployeeSchema = z.object({
   branch: z.string().trim().min(1).max(100).optional().default('Principal'),
   active: z.boolean().optional().default(true)
 });
+const desktopAttendanceEventSchema = desktopMobileEmployeeSchema.extend({
+  eventType: z.enum(['clock_in','clock_out']),
+  occurredAt: z.string().datetime({offset:true}).optional()
+});
+const desktopLegacySessionSchema = z.object({
+  id: z.string().trim().min(1).max(120),
+  employeeId: z.string().trim().min(3).max(120),
+  clockIn: z.string().datetime({offset:true}),
+  clockOut: z.string().datetime({offset:true}).nullable().optional()
+});
+
+// El puente de escritorio mantiene la identidad del empleado y registra en el
+// mismo historial que consulta ASISTIA Móvil. No expone estas rutas a la LAN.
+app.post('/api/desktop/record-attendance', requireDesktopBridge, (req,res,next) => {
+  try {
+    const input = desktopAttendanceEventSchema.parse(req.body);
+    if (!input.active) throw appError(403,'El empleado está inactivo.');
+    const admin = db.prepare("SELECT id,company_id FROM users WHERE role='admin' AND active=1 ORDER BY created_at LIMIT 1").get();
+    if (!admin) throw appError(503,'ASISTIA todavía no ha terminado su configuración inicial.');
+    const employeeNumber = input.employeeNumber || ('AS-' + createHash('sha256').update(input.id).digest('hex').slice(0,10).toUpperCase());
+    const numberOwner = db.prepare('SELECT id FROM employees WHERE company_id=? AND employee_number=?').get(admin.company_id,employeeNumber);
+    if (numberOwner && numberOwner.id !== input.id) throw appError(409,'El número de empleado ya está vinculado a otra ficha.');
+    const idOwner = db.prepare('SELECT company_id FROM employees WHERE id=?').get(input.id);
+    if (idOwner && idOwner.company_id !== admin.company_id) throw appError(409,'El identificador de empleado pertenece a otra empresa.');
+    const occurredAt = input.occurredAt || now();
+    const eventTime = Date.parse(occurredAt);
+    if (!Number.isFinite(eventTime) || eventTime > Date.now() + 5 * 60 * 1000) throw appError(400,'La hora del registro no es válida.');
+    const last = db.prepare('SELECT event_type,occurred_at FROM attendance_events WHERE company_id=? AND employee_id=? ORDER BY occurred_at DESC,rowid DESC LIMIT 1')
+      .get(admin.company_id,input.id);
+    if (last?.event_type === input.eventType) throw appError(409,input.eventType === 'clock_in' ? 'Ya existe una entrada sin salida.' : 'No existe una entrada pendiente de salida.');
+    if (last && eventTime < Date.parse(last.occurred_at)) throw appError(409,'La hora no puede ser anterior al último registro del empleado.');
+    const event = db.transaction(() => {
+      const created = now();
+      db.prepare(`INSERT INTO employees(id,company_id,employee_number,full_name,branch,active,created_at)
+        VALUES(?,?,?,?,?,?,?)
+        ON CONFLICT(id) DO UPDATE SET employee_number=excluded.employee_number,
+          full_name=excluded.full_name,branch=excluded.branch,active=excluded.active`)
+        .run(input.id,admin.company_id,employeeNumber,input.fullName,input.branch,input.active ? 1 : 0,created);
+      const saved = writeEvent({companyId:admin.company_id,employeeId:input.id,eventType:input.eventType,occurredAt,source:'kiosk',createdBy:admin.id});
+      writeAudit(admin.company_id,admin.id,'attendance.desktop_event_created','attendance_event',saved.id,{
+        employeeNumber,eventType:input.eventType,occurredAt:saved.occurred_at
+      });
+      return saved;
+    })();
+    res.status(201).json({ok:true,event});
+  } catch(error) { next(error); }
+});
+
+// Importación inicial de jornadas existentes: IDs deterministas evitan duplicados
+// cada vez que ASISTIA vuelve a abrirse o sincroniza el almacenamiento legado.
+app.post('/api/desktop/sync-sessions', requireDesktopBridge, (req,res,next) => {
+  try {
+    const input = z.array(desktopLegacySessionSchema).max(500).parse(req.body);
+    const admin = db.prepare("SELECT id,company_id FROM users WHERE role='admin' AND active=1 ORDER BY created_at LIMIT 1").get();
+    if (!admin) throw appError(503,'ASISTIA todavía no ha terminado su configuración inicial.');
+    const prepared = input.flatMap(session => {
+      const base = admin.company_id + ':' + session.id;
+      const events = [{employeeId:session.employeeId,eventType:'clock_in',occurredAt:session.clockIn,stableKey:base + ':in'}];
+      if (session.clockOut) events.push({employeeId:session.employeeId,eventType:'clock_out',occurredAt:session.clockOut,stableKey:base + ':out'});
+      return events;
+    }).sort((a,b)=>Date.parse(a.occurredAt)-Date.parse(b.occurredAt));
+    let imported = 0;
+    db.transaction(() => {
+      for (const item of prepared) {
+        const employee = db.prepare('SELECT id FROM employees WHERE id=? AND company_id=?').get(item.employeeId,admin.company_id);
+        if (!employee) continue;
+        const id = 'legacy_' + createHash('sha256').update(item.stableKey).digest('hex');
+        if (db.prepare('SELECT 1 FROM attendance_events WHERE id=?').get(id)) continue;
+        writeEvent({
+          id,companyId:admin.company_id,employeeId:item.employeeId,eventType:item.eventType,
+          occurredAt:item.occurredAt,source:'kiosk',createdBy:admin.id
+        });
+        imported++;
+      }
+      if (imported) writeAudit(admin.company_id,admin.id,'attendance.legacy_sessions_imported','attendance_event_batch','desktop-local-storage',{count:imported});
+    })();
+    res.json({ok:true,imported,received:input.length});
+  } catch(error) { next(error); }
+});
 app.post('/api/desktop/mobile-access', requireDesktopBridge, (req,res,next) => {
   try {
     const input = desktopMobileEmployeeSchema.parse(req.body);
@@ -461,6 +540,22 @@ app.get('/api/desktop/mobile-recent', requireDesktopBridge, (req,res,next) => {
       'WHERE e.company_id=? ORDER BY e.occurred_at DESC LIMIT ?'
     ).all(admin.company_id,limit);
     res.json({records:rows});
+  } catch(error) { next(error); }
+});
+app.get('/api/desktop/mobile-events', requireDesktopBridge, (req,res,next) => {
+  try {
+    const admin = db.prepare("SELECT company_id FROM users WHERE role='admin' AND active=1 ORDER BY created_at LIMIT 1").get();
+    if (!admin) throw appError(503,'ASISTIA todavía no ha terminado su configuración inicial.');
+    const limit = Math.min(10000,Math.max(1,Number(req.query.limit)||10000));
+    const events = db.prepare(
+      'SELECT e.id,e.employee_id AS employeeId,p.employee_number AS employeeNumber,p.full_name AS fullName,' +
+      'p.branch,e.event_type AS eventType,e.occurred_at AS occurredAt,e.received_at AS receivedAt,e.source,' +
+      'm.accuracy_m AS accuracyM,m.distance_m AS distanceM,m.accepted_at AS validatedAt ' +
+      'FROM attendance_events e JOIN employees p ON p.id=e.employee_id ' +
+      'JOIN mobile_attendance_evidence m ON m.attendance_event_id=e.id ' +
+      'WHERE e.company_id=? ORDER BY e.occurred_at DESC LIMIT ?'
+    ).all(admin.company_id,limit);
+    res.json({events});
   } catch(error) { next(error); }
 });
 app.patch('/api/employees/:id/deactivate', authenticate, roles('admin'), (req,res,next) => {
