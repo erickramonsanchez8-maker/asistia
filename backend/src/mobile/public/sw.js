@@ -1,11 +1,12 @@
-const CACHE_NAME = 'asistia-mobile-shell-v1';
+const CACHE_NAME = 'asistia-mobile-shell-v2';
 const SHELL = [
   '/mobile/',
   '/mobile/index.html',
   '/mobile/styles.css',
   '/mobile/app.js',
   '/mobile/manifest.webmanifest',
-  '/mobile/icon.svg'
+  '/mobile/icon.svg',
+  '/mobile/asistia-logo.svg'
 ];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(SHELL)));
