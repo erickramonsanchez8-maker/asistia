@@ -14,5 +14,7 @@ contextBridge.exposeInMainWorld('asistiaDesktop', Object.freeze({
   syncEmployees: employees => ipcRenderer.invoke('asistia:sync-employees', employees),
   getMobileSettings: branch => ipcRenderer.invoke('asistia:get-mobile-settings', branch),
   saveMobileSettings: settings => ipcRenderer.invoke('asistia:save-mobile-settings', settings),
-  getMobileNetworkInfo: () => ipcRenderer.invoke('asistia:get-mobile-network-info')
+  getMobileNetworkInfo: () => ipcRenderer.invoke('asistia:get-mobile-network-info'),
+  getMobileConnectionInfo: () => ipcRenderer.invoke('asistia:get-mobile-connection-info'),
+  openMobileCertificateFolder: () => ipcRenderer.invoke('asistia:open-mobile-certificate-folder')
 }));
