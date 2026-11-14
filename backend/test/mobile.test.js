@@ -15,6 +15,7 @@ let tempDir;
 let adminToken;
 let workerToken;
 let employeeId;
+const desktopBridgeToken = 'test-desktop-bridge-token-with-at-least-64-characters-123456789';
 
 async function freePort() {
   const server = createServer();
@@ -25,7 +26,7 @@ async function freePort() {
 }
 async function request(path, options) {
   const config = options || {};
-  const headers = Object.assign({}, config.token ? { Authorization: 'Bearer ' + config.token } : {});
+  const headers = Object.assign({}, config.token ? { Authorization: 'Bearer ' + config.token } : {}, config.bridgeToken ? { 'X-ASISTIA-Desktop-Bridge': config.bridgeToken } : {});
   if (config.body) headers['Content-Type'] = 'application/json';
   const response = await fetch(baseUrl + path, {
     method: config.method || 'GET',
@@ -50,6 +51,7 @@ before(async () => {
       PORT: String(port),
       DATABASE_PATH: join(tempDir, 'mobile-test.sqlite'),
       JWT_SECRET: 'test-secret-for-asistia-mobile-with-at-least-32-characters',
+      DESKTOP_BRIDGE_TOKEN: desktopBridgeToken,
       BOOTSTRAP_COMPANY_NAME: 'Empresa móvil QA',
       BOOTSTRAP_ADMIN_NAME: 'Admin móvil',
       BOOTSTRAP_ADMIN_EMAIL: 'admin-mobile@test.example',
@@ -134,12 +136,56 @@ after(async () => {
 test('la PWA y el manifiesto se sirven desde la API', async () => {
   const page = await fetch(baseUrl + '/mobile/');
   assert.equal(page.status, 200);
-  assert.match(await page.text(), /ASISTIA Móvil/);
+  const html = await page.text();
+  assert.match(html, /ASISTIA Móvil/);
+  assert.match(html, /asistia-logo\.svg/);
+  assert.match(html, /employee-number/);
+  const logo = await fetch(baseUrl + '/mobile/asistia-logo.svg');
+  assert.equal(logo.status, 200);
   const manifest = await fetch(baseUrl + '/mobile/manifest.webmanifest');
   assert.equal(manifest.status, 200);
   const data = await manifest.json();
   assert.equal(data.display, 'standalone');
   assert.equal(data.start_url, '/mobile/');
+});
+
+test('el puente de escritorio conserva el ID del empleado y genera acceso móvil con su número', async () => {
+  const denied = await request('/api/desktop/mobile-access', {
+    method: 'POST',
+    body: { id: 'emp_legacy_001', fullName: 'Empleado existente', employeeNumber: 'LEG-001' }
+  });
+  assert.equal(denied.status, 403);
+
+  const created = await request('/api/desktop/mobile-access', {
+    method: 'POST',
+    bridgeToken: desktopBridgeToken,
+    body: { id: 'emp_legacy_001', fullName: 'Empleado existente', employeeNumber: 'LEG-001', branch: 'Principal', active: true }
+  });
+  assert.equal(created.status, 201, JSON.stringify(created.data));
+  assert.equal(created.data.employee.id, 'emp_legacy_001');
+  assert.equal(created.data.access.login, 'LEG-001');
+  assert.equal(created.data.access.temporary, true);
+
+  const login = await request('/api/auth/login', {
+    method: 'POST',
+    body: { employeeNumber: 'LEG-001', password: created.data.access.password }
+  });
+  assert.equal(login.status, 200, JSON.stringify(login.data));
+  assert.equal(login.data.user.role, 'worker');
+
+  const synced = await request('/api/desktop/sync-employees', {
+    method: 'POST',
+    bridgeToken: desktopBridgeToken,
+    body: [{ id: 'emp_legacy_001', fullName: 'Empleado existente actualizado', employeeNumber: 'LEG-001', branch: 'Principal', active: false }]
+  });
+  assert.equal(synced.status, 200, JSON.stringify(synced.data));
+  assert.equal(synced.data.synced, 1);
+
+  const inactiveLogin = await request('/api/auth/login', {
+    method: 'POST',
+    body: { employeeNumber: 'LEG-001', password: created.data.access.password }
+  });
+  assert.equal(inactiveLogin.status, 401);
 });
 
 test('la cuenta de trabajador solo recibe su expediente y política de ubicación', async () => {
@@ -287,6 +333,9 @@ test('los registros GPS válidos se guardan en la bitácora canónica de la API'
   const recent = await request('/api/mobile/recent', { token: adminToken });
   assert.equal(recent.status, 200);
   assert.equal(recent.data.records.length, 2);
+  const desktopRecent = await request('/api/desktop/mobile-recent', { bridgeToken: desktopBridgeToken });
+  assert.equal(desktopRecent.status, 200);
+  assert.equal(desktopRecent.data.records.length, 2);
   assert.equal('latitude' in recent.data.records[0], false);
   assert.equal('longitude' in recent.data.records[0], false);
 });
