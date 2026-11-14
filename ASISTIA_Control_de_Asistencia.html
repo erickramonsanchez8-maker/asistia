@@ -2626,16 +2626,21 @@ document.addEventListener("keydown", (e)=>{
   if(e.key==="Escape") closeModal();
 });
 
-// Convierte los eventos validados de ASISTIA Móvil en jornadas del mismo modelo
-// que ya utilizan el historial, los incidentes y los reportes de escritorio.
+// Reconstruye una jornada usando el flujo completo de eventos del servicio local.
+// Esto también une entradas de quiosco con salidas móviles y viceversa.
 window.asistiaApplyMobileEvents = function(events){
   if(!db || !Array.isArray(events) || !events.length) return {ok:true,changed:0};
   const ordered=events.filter(event=>event&&event.id&&event.employeeId&&
     (event.eventType==="clock_in"||event.eventType==="clock_out")&&event.occurredAt)
-    .slice().sort((a,b)=>Date.parse(a.occurredAt)-Date.parse(b.occurredAt));
+    .slice().sort((a,b)=>{
+      const diff=Date.parse(a.occurredAt)-Date.parse(b.occurredAt);
+      return diff || String(a.id).localeCompare(String(b.id));
+    });
   const pending=new Map();
   const projections=[];
   const makeSession=(entry,exit)=>{
+    const involvesMobile=entry.source==="mobile" || exit?.source==="mobile";
+    if(!involvesMobile) return null;
     const emp=empById(entry.employeeId);
     if(!emp || !emp.active) return null;
     const local=zoned(new Date(entry.occurredAt));
@@ -2645,14 +2650,17 @@ window.asistiaApplyMobileEvents = function(events){
       operationalDate=addDays(local.date,-1);
     }
     snap=scheduleFor(emp,operationalDate);
+    const matchingLocal=db.sessions.find(session=>
+      session.employeeId===emp.id && session.clockIn===entry.occurredAt && session.source!=="mobile");
+    const sessionId=matchingLocal?.id || ("mobile_"+String(entry.id).replace(/[^A-Za-z0-9_-]/g,"_"));
     const session={
-      id:"mobile_"+String(entry.id).replace(/[^A-Za-z0-9_-]/g,"_"),
+      id:sessionId,
       employeeId:emp.id,
       operationalDate,
       clockIn:entry.occurredAt,
       clockOut:exit?exit.occurredAt:null,
-      scheduleSnapshot:snap,
-      autoBreakPolicy:"scheduled-v1",
+      scheduleSnapshot:matchingLocal?.scheduleSnapshot || snap,
+      autoBreakPolicy:matchingLocal?.autoBreakPolicy || "scheduled-v1",
       lateMinutes:0,
       source:"mobile",
       corrected:false,
@@ -2661,8 +2669,12 @@ window.asistiaApplyMobileEvents = function(events){
       createdAt:entry.receivedAt||entry.occurredAt,
       mobileEventIds:[entry.id,...(exit?[exit.id]:[])],
       mobileEvidence:{
-        entry:{accuracyM:entry.accuracyM,distanceM:entry.distanceM,validatedAt:entry.validatedAt||null},
-        exit:exit?{accuracyM:exit.accuracyM,distanceM:exit.distanceM,validatedAt:exit.validatedAt||null}:null
+        entry:entry.source==="mobile"?{
+          accuracyM:entry.accuracyM,distanceM:entry.distanceM,validatedAt:entry.validatedAt||null
+        }:null,
+        exit:exit?.source==="mobile"?{
+          accuracyM:exit.accuracyM,distanceM:exit.distanceM,validatedAt:exit.validatedAt||null
+        }:null
       }
     };
     session.lateMinutes=computeLate(session);
@@ -2696,6 +2708,8 @@ window.asistiaApplyMobileEvents = function(events){
       const merged={
         ...(existing||{}),
         ...projected,
+        scheduleSnapshot:existing?.scheduleSnapshot||projected.scheduleSnapshot,
+        autoBreakPolicy:existing?.autoBreakPolicy||projected.autoBreakPolicy,
         corrected:Boolean(existing?.corrected),
         corrections:existing?.corrections||[],
         mealBreaks:existing?.mealBreaks||[]
