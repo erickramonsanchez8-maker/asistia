@@ -354,6 +354,38 @@ function requireDesktopBridge(req,res,next) {
   }
   next();
 }
+app.post('/api/desktop/sync-employees', requireDesktopBridge, (req,res,next) => {
+  try {
+    const input = z.array(desktopMobileEmployeeSchema).max(1000).parse(req.body);
+    const admin = db.prepare("SELECT id,company_id FROM users WHERE role='admin' AND active=1 ORDER BY created_at LIMIT 1").get();
+    if (!admin) throw appError(503, 'ASISTIA todavía no ha terminado su configuración inicial.');
+    const syncOne = db.prepare(`INSERT INTO employees(id,company_id,employee_number,full_name,branch,active,created_at)
+      VALUES(?,?,?,?,?,?,?)
+      ON CONFLICT(id) DO UPDATE SET employee_number=excluded.employee_number,
+        full_name=excluded.full_name,branch=excluded.branch,active=excluded.active`);
+    const findNumber = db.prepare('SELECT id FROM employees WHERE company_id=? AND employee_number=?');
+    const findId = db.prepare('SELECT company_id FROM employees WHERE id=?');
+    const updateWorkers = db.prepare("UPDATE users SET name=?,active=?,token_version=token_version+CASE WHEN active<>? THEN 1 ELSE 0 END WHERE company_id=? AND employee_id=? AND role='worker'");
+    const normalized = input.map(employee => ({
+      ...employee,
+      employeeNumber: employee.employeeNumber || ('AS-' + createHash('sha256').update(employee.id).digest('hex').slice(0,10).toUpperCase())
+    }));
+    db.transaction(() => {
+      for (const employee of normalized) {
+        const owner = findNumber.get(admin.company_id,employee.employeeNumber);
+        if (owner && owner.id !== employee.id) throw appError(409, 'El número de empleado ' + employee.employeeNumber + ' está duplicado en ASISTIA.');
+        const idOwner = findId.get(employee.id);
+        if (idOwner && idOwner.company_id !== admin.company_id) throw appError(409, 'Un identificador de empleado pertenece a otra empresa.');
+        syncOne.run(employee.id,admin.company_id,employee.employeeNumber,employee.fullName,employee.branch,employee.active ? 1 : 0,now());
+        updateWorkers.run(employee.fullName,employee.active ? 1 : 0,employee.active ? 1 : 0,admin.company_id,employee.id);
+      }
+      if (normalized.length) writeAudit(admin.company_id,admin.id,'employees.desktop_sync','employee_batch','desktop-local-storage',{
+        count:normalized.length,active:normalized.filter(x=>x.active).length
+      });
+    })();
+    res.json({ok:true,synced:normalized.length});
+  } catch(error) { next(error); }
+});
 const desktopMobileEmployeeSchema = z.object({
   id: z.string().trim().min(3).max(120).regex(/^[A-Za-z0-9_-]+$/),
   fullName: z.string().trim().min(2).max(160),
