@@ -1,6 +1,6 @@
 'use strict';
 const { app, BrowserWindow, ipcMain, shell } = require('electron');
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
@@ -14,6 +14,7 @@ const UPDATE_FILES = new Set(['ASISTIA_Control_de_Asistencia.html', 'desktop/des
 let mainWindow = null;
 let backendProcess = null;
 let stopping = false;
+let mobileConnection = null;
 
 app.setAppUserModelId('mx.asistia.desktop');
 app.setPath('userData', path.join(app.getPath('appData'), 'ASISTIA'));
@@ -27,7 +28,8 @@ function runtimePaths() {
   return {
     backendDir,
     serverFile,
-    nodeCommand: app.isPackaged ? bundledNode : (process.env.ASISTIA_NODE_PATH || 'node')
+    nodeCommand: app.isPackaged ? bundledNode : (process.env.ASISTIA_NODE_PATH || 'node'),
+    mobileCertScript: path.join(backendDir, 'src', 'mobile', 'ensure-certificates.ps1')
   };
 }
 
@@ -48,6 +50,8 @@ function loadOrCreateSecret() {
       ? saved.adminEmail : 'admin-' + crypto.randomBytes(10).toString('hex') + '@local.asistia',
     adminPassword: typeof saved.adminPassword === 'string' && saved.adminPassword.length >= 24
       ? saved.adminPassword : crypto.randomBytes(32).toString('base64url'),
+    mobilePfxPassword: typeof saved.mobilePfxPassword === 'string' && saved.mobilePfxPassword.length >= 24
+      ? saved.mobilePfxPassword : crypto.randomBytes(32).toString('base64url'),
     createdAt: saved.createdAt || new Date().toISOString()
   };
   const temp = file + '.tmp';
@@ -102,6 +106,63 @@ function getTrialStatus() {
   };
 }
 
+function getPrivateNetworkCandidates() {
+  const interfaces = os.networkInterfaces();
+  const candidates = [];
+  for (const [name, entries] of Object.entries(interfaces)) {
+    for (const item of entries || []) {
+      const family = item.family;
+      if (item.internal || (family !== 'IPv4' && family !== 4) || !isPrivateIpv4(item.address)) continue;
+      const cidr = subnetCidr(item.address,item.netmask);
+      if (!cidr || candidates.some(candidate => candidate.cidr === cidr)) continue;
+      candidates.push({name,address:item.address,netmask:item.netmask,cidr});
+    }
+  }
+  return candidates;
+}
+
+function ensureMobileCertificates(backendDir, userData, security, scriptPath) {
+  if (process.platform !== 'win32' || !fs.existsSync(scriptPath)) return null;
+  const networks = getPrivateNetworkCandidates();
+  if (!networks.length) return null;
+  const certificateDir = path.join(userData, 'certificates');
+  fs.mkdirSync(certificateDir, { recursive: true });
+  const resultPath = path.join(certificateDir, 'mobile-certificate-status.json');
+  const ips = networks.map(item => item.address).join(',');
+  const run = spawnSync('powershell.exe', [
+    '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',scriptPath,
+    '-OutputDirectory',certificateDir,'-ServerIps',ips
+  ], {
+    encoding:'utf8',
+    timeout:45000,
+    windowsHide:true,
+    env:{...process.env,ASISTIA_CERT_PASSWORD:security.mobilePfxPassword}
+  });
+  if (run.error || run.status !== 0 || !fs.existsSync(resultPath)) {
+    return {ready:false,error:run.error?.message || run.stderr || 'No se pudo preparar HTTPS local.',networks};
+  }
+  try {
+    const status = JSON.parse(fs.readFileSync(resultPath,'utf8').replace(/^\uFEFF/,''));
+    if (!status.pfxPath || !fs.existsSync(status.pfxPath) || !status.rootCertificatePath || !fs.existsSync(status.rootCertificatePath)) {
+      return {ready:false,error:'No se encontraron los archivos del certificado local.',networks};
+    }
+    const preferred = networks.find(item => /wi.?fi|wireless|wlan/i.test(item.name)) || networks[0];
+    return {
+      ready:true,
+      pfxPath:status.pfxPath,
+      rootCertificatePath:status.rootCertificatePath,
+      serverIps:status.serverIps || networks.map(item=>item.address),
+      preferredIp:preferred.address,
+      networkCandidates:networks,
+      mobileUrl:'https://' + preferred.address + ':43178/mobile/',
+      firewallConfigured:Boolean(status.firewallConfigured),
+      firewallMessage:status.firewallMessage || ''
+    };
+  } catch(error) {
+    return {ready:false,error:error.message || 'No se pudo leer el estado del certificado local.',networks};
+  }
+}
+
 async function waitForLocalApi(timeoutMs = 12000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline && !stopping) {
@@ -118,12 +179,13 @@ async function waitForLocalApi(timeoutMs = 12000) {
 }
 
 async function startLocalBackend() {
-  const { backendDir, serverFile, nodeCommand } = runtimePaths();
+  const { backendDir, serverFile, nodeCommand, mobileCertScript } = runtimePaths();
   if (!fs.existsSync(serverFile)) return false;
   if (app.isPackaged && !fs.existsSync(nodeCommand)) return false;
 
   const userData = app.getPath('userData');
   const security = loadOrCreateSecret();
+  mobileConnection = ensureMobileCertificates(backendDir,userData,security,mobileCertScript);
   const env = {
     ...process.env,
     NODE_ENV: 'production',
@@ -138,6 +200,12 @@ async function startLocalBackend() {
     DATABASE_PATH: path.join(userData, 'database', 'asistia.sqlite'),
     BACKUP_DIR: path.join(userData, 'backups')
   };
+  if (mobileConnection?.ready) {
+    env.MOBILE_HTTPS_PFX_PATH = mobileConnection.pfxPath;
+    env.MOBILE_HTTPS_PFX_PASSPHRASE = security.mobilePfxPassword;
+    env.MOBILE_HTTPS_PORT = '43178';
+    env.MOBILE_HTTPS_HOST = '0.0.0.0';
+  }
   fs.mkdirSync(path.dirname(env.DATABASE_PATH), { recursive: true });
   fs.mkdirSync(env.BACKUP_DIR, { recursive: true });
 
@@ -221,23 +289,24 @@ function subnetCidr(address, mask) {
   const network = ip.map((n,i) => n & nm[i]).join('.');
   return network + '/' + prefix;
 }
-ipcMain.handle('asistia:get-mobile-network-info', () => {
-  const interfaces = os.networkInterfaces();
-  const candidates = [];
-  for (const [name, entries] of Object.entries(interfaces)) {
-    for (const item of entries || []) {
-      const family = item.family;
-      if (item.internal || (family !== 'IPv4' && family !== 4) || !isPrivateIpv4(item.address)) continue;
-      const cidr = subnetCidr(item.address,item.netmask);
-      if (!cidr || !candidates.some(candidate => candidate.cidr === cidr)) {
-        if (!cidr) continue;
-      }
-      if (!candidates.some(candidate => candidate.cidr === cidr)) {
-        candidates.push({name,address:item.address,netmask:item.netmask,cidr});
-      }
-    }
-  }
-  return {candidates};
+ipcMain.handle('asistia:get-mobile-network-info', () => ({candidates:getPrivateNetworkCandidates()}));
+ipcMain.handle('asistia:get-mobile-connection-info', () => {
+  const info = mobileConnection || {ready:false,error:'No se pudo preparar el certificado HTTPS local.',networks:getPrivateNetworkCandidates()};
+  return {
+    ready:Boolean(info.ready),
+    mobileUrl:info.mobileUrl || '',
+    preferredIp:info.preferredIp || '',
+    networkCandidates:info.networkCandidates || info.networks || [],
+    rootCertificatePath:info.rootCertificatePath || '',
+    firewallConfigured:Boolean(info.firewallConfigured),
+    firewallMessage:info.firewallMessage || '',
+    error:info.error || ''
+  };
+});
+ipcMain.handle('asistia:open-mobile-certificate-folder', async () => {
+  const folder = path.join(app.getPath('userData'),'certificates');
+  await shell.openPath(folder);
+  return folder;
 });
 
 ipcMain.handle('asistia:open-data-folder', async () => {
