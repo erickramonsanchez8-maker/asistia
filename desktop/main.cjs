@@ -30,18 +30,30 @@ function runtimePaths() {
   };
 }
 
+let localSecurity = null;
+
 function loadOrCreateSecret() {
   const file = path.join(app.getPath('userData'), 'service-security.json');
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  try {
-    const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
-    if (typeof saved.jwtSecret === 'string' && saved.jwtSecret.length >= 64) return saved.jwtSecret;
-  } catch {}
-  const jwtSecret = crypto.randomBytes(48).toString('hex');
+  let saved = {};
+  try { saved = JSON.parse(fs.readFileSync(file, 'utf8')) || {}; } catch {}
+  const state = {
+    ...saved,
+    jwtSecret: typeof saved.jwtSecret === 'string' && saved.jwtSecret.length >= 64
+      ? saved.jwtSecret : crypto.randomBytes(48).toString('hex'),
+    desktopBridgeToken: typeof saved.desktopBridgeToken === 'string' && saved.desktopBridgeToken.length >= 64
+      ? saved.desktopBridgeToken : crypto.randomBytes(48).toString('hex'),
+    adminEmail: typeof saved.adminEmail === 'string' && saved.adminEmail.includes('@')
+      ? saved.adminEmail : 'admin-' + crypto.randomBytes(10).toString('hex') + '@local.asistia',
+    adminPassword: typeof saved.adminPassword === 'string' && saved.adminPassword.length >= 24
+      ? saved.adminPassword : crypto.randomBytes(32).toString('base64url'),
+    createdAt: saved.createdAt || new Date().toISOString()
+  };
   const temp = file + '.tmp';
-  fs.writeFileSync(temp, JSON.stringify({ jwtSecret, createdAt: new Date().toISOString() }), { mode: 0o600 });
+  fs.writeFileSync(temp, JSON.stringify(state, null, 2), { mode: 0o600 });
   fs.renameSync(temp, file);
-  return jwtSecret;
+  localSecurity = state;
+  return state;
 }
 
 const TRIAL_DAYS = 15;
@@ -110,12 +122,18 @@ async function startLocalBackend() {
   if (app.isPackaged && !fs.existsSync(nodeCommand)) return false;
 
   const userData = app.getPath('userData');
+  const security = loadOrCreateSecret();
   const env = {
     ...process.env,
     NODE_ENV: 'production',
     HOST: '127.0.0.1',
     PORT: String(API_PORT),
-    JWT_SECRET: loadOrCreateSecret(),
+    JWT_SECRET: security.jwtSecret,
+    DESKTOP_BRIDGE_TOKEN: security.desktopBridgeToken,
+    BOOTSTRAP_ADMIN_EMAIL: security.adminEmail,
+    BOOTSTRAP_ADMIN_PASSWORD: security.adminPassword,
+    BOOTSTRAP_ADMIN_NAME: 'Administrador ASISTIA',
+    BOOTSTRAP_COMPANY_NAME: 'ASISTIA',
     DATABASE_PATH: path.join(userData, 'database', 'asistia.sqlite'),
     BACKUP_DIR: path.join(userData, 'backups')
   };
@@ -149,6 +167,31 @@ ipcMain.handle('asistia:health', async () => {
   } catch {
     return { status: 'offline', database: 'unknown', service: 'ASISTIA local', version: activeUpdateVersion(path.join(app.getPath('userData'), 'updates')) };
   }
+});
+
+async function desktopBridgeRequest(route, options = {}) {
+  if (!localSecurity) loadOrCreateSecret();
+  const response = await fetch(API_URL + route, {
+    method: options.method || 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-ASISTIA-Desktop-Bridge': localSecurity.desktopBridgeToken
+    },
+    body: options.body ? JSON.stringify(options.body) : undefined,
+    signal: AbortSignal.timeout(8000),
+    cache: 'no-store'
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || 'No se pudo completar la operación local.');
+  return data;
+}
+
+ipcMain.handle('asistia:provision-mobile-access', async (_event, employee) => {
+  if (!employee || typeof employee !== 'object') throw new Error('Ficha de empleado inválida.');
+  return desktopBridgeRequest('/api/desktop/mobile-access', { method: 'POST', body: employee });
+});
+ipcMain.handle('asistia:mobile-recent', async () => {
+  return desktopBridgeRequest('/api/desktop/mobile-recent?limit=20');
 });
 
 ipcMain.handle('asistia:open-data-folder', async () => {
