@@ -148,6 +148,9 @@
 
   let lastEmployeeSyncFingerprint = '';
   let employeeSyncInFlight = false;
+  let lastAttendanceSyncFingerprint = '';
+  let attendanceSyncInFlight = false;
+  let mobileEventsInFlight = false;
   let mobileActivityInFlight = false;
 
   const htmlText = value => String(value ?? '').replace(/[&<>"']/g, char => ({
@@ -177,6 +180,47 @@
     } catch {
       // A transient local-service failure is retried on the next cycle.
     } finally { employeeSyncInFlight = false; }
+  };
+
+  const syncLegacyAttendance = async () => {
+    if (attendanceSyncInFlight || !window.asistiaDesktop?.syncSessions) return;
+    let sessions;
+    try {
+      const data = JSON.parse(localStorage.getItem('control_asistencia_pro_v1') || 'null');
+      if (!data || !Array.isArray(data.sessions)) return;
+      sessions = data.sessions.filter(item => item && item.id && item.employeeId && item.clockIn && item.source !== 'mobile')
+        .map(item => ({
+          id: String(item.id),
+          employeeId: String(item.employeeId),
+          clockIn: String(item.clockIn),
+          clockOut: item.clockOut ? String(item.clockOut) : null
+        }));
+    } catch { return; }
+    const fingerprint = JSON.stringify(sessions);
+    if (!sessions.length || fingerprint === lastAttendanceSyncFingerprint) return;
+    attendanceSyncInFlight = true;
+    try {
+      for (let index = 0; index < sessions.length; index += 400) {
+        const batch = sessions.slice(index, index + 400);
+        const result = await window.asistiaDesktop.syncSessions(batch);
+        if (!result?.ok || result.received !== batch.length || result.skipped > 0) return;
+      }
+      lastAttendanceSyncFingerprint = fingerprint;
+    } catch {
+      // Si faltan fichas de empleado o el servicio no está disponible, se reintenta.
+    } finally { attendanceSyncInFlight = false; }
+  };
+
+  const syncMobileEventsToReports = async () => {
+    if (mobileEventsInFlight || !window.asistiaDesktop?.getMobileEvents ||
+        typeof window.asistiaApplyMobileEvents !== 'function') return;
+    mobileEventsInFlight = true;
+    try {
+      const result = await window.asistiaDesktop.getMobileEvents();
+      if (Array.isArray(result?.events)) window.asistiaApplyMobileEvents(result.events);
+    } catch {
+      // Se reintentará en el siguiente ciclo; nunca se elimina información local.
+    } finally { mobileEventsInFlight = false; }
   };
 
   const showMobileCredentials = data => {
@@ -465,7 +509,8 @@
     ensureBadge();
     checkHealth();
     ensureEmployeeMobileActions();
-    syncExistingEmployees();
+    syncExistingEmployees().then(syncLegacyAttendance);
+    syncMobileEventsToReports();
     refreshMobileActivity();
   };
   const observer = new MutationObserver(sync);
