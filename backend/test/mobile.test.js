@@ -1,6 +1,6 @@
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -131,6 +131,21 @@ after(async () => {
     await new Promise(resolve => child.once('exit', resolve));
   }
   if (tempDir) await rm(tempDir, { recursive: true, force: true });
+});
+
+test('los procesos y mejoras de Electron conservan sintaxis válida', () => {
+  const root = join(backendDir, '..');
+  const files = [
+    join(root, 'desktop', 'main.cjs'),
+    join(root, 'desktop', 'preload.cjs'),
+    join(root, 'desktop', 'desktop-enhancements.js'),
+    join(backendDir, 'src', 'mobile', 'public', 'app.js'),
+    join(backendDir, 'src', 'mobile', 'public', 'sw.js')
+  ];
+  for (const file of files) {
+    const result = spawnSync(process.execPath, ['--check', file], { encoding: 'utf8' });
+    assert.equal(result.status, 0, file + ': ' + (result.stderr || result.stdout));
+  }
 });
 
 test('la PWA y el manifiesto se sirven desde la API', async () => {
