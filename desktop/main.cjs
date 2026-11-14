@@ -3,6 +3,7 @@ const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
+const os = require('node:os');
 const crypto = require('node:crypto');
 
 const API_PORT = 43177;
@@ -196,6 +197,47 @@ ipcMain.handle('asistia:mobile-recent', async () => {
 ipcMain.handle('asistia:sync-employees', async (_event, employees) => {
   if (!Array.isArray(employees)) throw new Error('La lista de empleados no es válida.');
   return desktopBridgeRequest('/api/desktop/sync-employees', { method: 'POST', body: employees });
+});
+ipcMain.handle('asistia:get-mobile-settings', async (_event, branch) => {
+  return desktopBridgeRequest('/api/desktop/mobile-settings?branch=' + encodeURIComponent(String(branch || 'Principal')));
+});
+ipcMain.handle('asistia:save-mobile-settings', async (_event, settings) => {
+  if (!settings || typeof settings !== 'object') throw new Error('La configuración móvil no es válida.');
+  return desktopBridgeRequest('/api/desktop/mobile-settings', { method: 'PUT', body: settings });
+});
+function isPrivateIpv4(address) {
+  const parts = String(address).split('.').map(Number);
+  if (parts.length !== 4 || parts.some(n => !Number.isInteger(n) || n < 0 || n > 255)) return false;
+  return parts[0] === 10 || (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
+    (parts[0] === 192 && parts[1] === 168);
+}
+function subnetCidr(address, mask) {
+  const ip = String(address).split('.').map(Number);
+  const nm = String(mask).split('.').map(Number);
+  if (ip.length !== 4 || nm.length !== 4 || ip.some(n => !Number.isInteger(n) || n<0 || n>255) || nm.some(n => !Number.isInteger(n) || n<0 || n>255)) return null;
+  const maskBits = nm.map(n => n.toString(2).padStart(8,'0')).join('');
+  if (!/^1*0*$/.test(maskBits)) return null;
+  const prefix = (maskBits.match(/1/g) || []).length;
+  const network = ip.map((n,i) => n & nm[i]).join('.');
+  return network + '/' + prefix;
+}
+ipcMain.handle('asistia:get-mobile-network-info', () => {
+  const interfaces = os.networkInterfaces();
+  const candidates = [];
+  for (const [name, entries] of Object.entries(interfaces)) {
+    for (const item of entries || []) {
+      const family = item.family;
+      if (item.internal || (family !== 'IPv4' && family !== 4) || !isPrivateIpv4(item.address)) continue;
+      const cidr = subnetCidr(item.address,item.netmask);
+      if (!cidr || !candidates.some(candidate => candidate.cidr === cidr)) {
+        if (!cidr) continue;
+      }
+      if (!candidates.some(candidate => candidate.cidr === cidr)) {
+        candidates.push({name,address:item.address,netmask:item.netmask,cidr});
+      }
+    }
+  }
+  return {candidates};
 });
 
 ipcMain.handle('asistia:open-data-folder', async () => {
