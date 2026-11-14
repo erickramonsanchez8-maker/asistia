@@ -461,9 +461,12 @@ app.post('/api/desktop/sync-sessions', requireDesktopBridge, (req,res,next) => {
         if (!employee) continue;
         const id = 'legacy_' + createHash('sha256').update(item.stableKey).digest('hex');
         if (db.prepare('SELECT 1 FROM attendance_events WHERE id=?').get(id)) continue;
+        const sameEvent=db.prepare('SELECT 1 FROM attendance_events WHERE company_id=? AND employee_id=? AND event_type=? AND occurred_at=? LIMIT 1')
+          .get(admin.company_id,item.employeeId,item.eventType,item.occurredAt);
+        if (sameEvent) continue;
         writeEvent({
           id,companyId:admin.company_id,employeeId:item.employeeId,eventType:item.eventType,
-          occurredAt:item.occurredAt,source:'kiosk',createdBy:admin.id
+          occurredAt:item.occurredAt,source:'legacy_migration',createdBy:admin.id
         });
         imported++;
       }
@@ -547,13 +550,15 @@ app.get('/api/desktop/mobile-events', requireDesktopBridge, (req,res,next) => {
     const admin = db.prepare("SELECT company_id FROM users WHERE role='admin' AND active=1 ORDER BY created_at LIMIT 1").get();
     if (!admin) throw appError(503,'ASISTIA todavía no ha terminado su configuración inicial.');
     const limit = Math.min(10000,Math.max(1,Number(req.query.limit)||10000));
+    // Incluye todos los orígenes para unir entradas y salidas mixtas (quiosco/móvil).
+    // Los eventos históricos se usan como contexto; no generan jornadas duplicadas.
     const events = db.prepare(
       'SELECT e.id,e.employee_id AS employeeId,p.employee_number AS employeeNumber,p.full_name AS fullName,' +
       'p.branch,e.event_type AS eventType,e.occurred_at AS occurredAt,e.received_at AS receivedAt,e.source,' +
       'm.accuracy_m AS accuracyM,m.distance_m AS distanceM,m.accepted_at AS validatedAt ' +
       'FROM attendance_events e JOIN employees p ON p.id=e.employee_id ' +
-      'JOIN mobile_attendance_evidence m ON m.attendance_event_id=e.id ' +
-      'WHERE e.company_id=? ORDER BY e.occurred_at DESC LIMIT ?'
+      'LEFT JOIN mobile_attendance_evidence m ON m.attendance_event_id=e.id ' +
+      'WHERE e.company_id=? ORDER BY e.occurred_at DESC,e.rowid DESC LIMIT ?'
     ).all(admin.company_id,limit);
     res.json({events});
   } catch(error) { next(error); }
