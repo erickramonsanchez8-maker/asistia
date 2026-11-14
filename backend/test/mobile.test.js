@@ -188,6 +188,41 @@ test('el puente de escritorio conserva el ID del empleado y genera acceso móvil
   assert.equal(inactiveLogin.status, 401);
 });
 
+test('la configuración de sucursal puede administrarse desde el instalador local', async () => {
+  const current = await request('/api/desktop/mobile-settings?branch=Principal', { bridgeToken: desktopBridgeToken });
+  assert.equal(current.status, 200);
+  assert.equal(current.data.configured, true);
+  assert.equal(current.data.settings.branch, 'Principal');
+
+  const saved = await request('/api/desktop/mobile-settings', {
+    method: 'PUT',
+    bridgeToken: desktopBridgeToken,
+    body: {
+      branch: 'Principal',
+      latitude: 19.700100,
+      longitude: -103.460100,
+      radiusM: 75,
+      maxAccuracyM: 40,
+      allowedCidrs: ['192.168.1.0/24']
+    }
+  });
+  assert.equal(saved.status, 200, JSON.stringify(saved.data));
+  assert.equal(saved.data.settings.radiusM, 75);
+
+  const rejected = await request('/api/desktop/mobile-settings', {
+    method: 'PUT',
+    bridgeToken: desktopBridgeToken,
+    body: {
+      branch: 'Principal',
+      latitude: 19.7,
+      longitude: -103.46,
+      radiusM: 50,
+      maxAccuracyM: 50,
+      allowedCidrs: ['8.8.8.0/24']
+    }
+  });
+  assert.equal(rejected.status, 400);
+});
 test('la cuenta de trabajador solo recibe su expediente y política de ubicación', async () => {
   const profile = await request('/api/mobile/me', { token: workerToken });
   assert.equal(profile.status, 200, JSON.stringify(profile.data));
