@@ -266,6 +266,17 @@ ipcMain.handle('asistia:sync-employees', async (_event, employees) => {
   if (!Array.isArray(employees)) throw new Error('La lista de empleados no es válida.');
   return desktopBridgeRequest('/api/desktop/sync-employees', { method: 'POST', body: employees });
 });
+ipcMain.handle('asistia:record-attendance-event', async (_event, attendance) => {
+  if (!attendance || typeof attendance !== 'object') throw new Error('Registro de asistencia inválido.');
+  return desktopBridgeRequest('/api/desktop/record-attendance', { method: 'POST', body: attendance });
+});
+ipcMain.handle('asistia:sync-sessions', async (_event, sessions) => {
+  if (!Array.isArray(sessions)) throw new Error('La lista de jornadas no es válida.');
+  return desktopBridgeRequest('/api/desktop/sync-sessions', { method: 'POST', body: sessions });
+});
+ipcMain.handle('asistia:mobile-events', async () => {
+  return desktopBridgeRequest('/api/desktop/mobile-events?limit=10000');
+});
 ipcMain.handle('asistia:get-mobile-settings', async (_event, branch) => {
   return desktopBridgeRequest('/api/desktop/mobile-settings?branch=' + encodeURIComponent(String(branch || 'Principal')));
 });
