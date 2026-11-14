@@ -44,6 +44,13 @@
       .asistia-mobile-settings-dialog .asistia-settings-save{background:#123b62;color:#fff;font-weight:800}
       .asistia-mobile-settings-dialog .asistia-settings-secondary{background:#eef3f8;color:#234463}
       .asistia-mobile-settings-dialog .asistia-mobile-actions{justify-content:space-between}
+      .asistia-mobile-connection-dialog{width:min(94vw,620px);max-height:90vh;overflow:auto;border:1px solid #dce5ee;border-radius:20px;padding:26px;color:#172638;box-shadow:0 24px 80px rgba(5,22,40,.3)}
+      .asistia-mobile-connection-dialog::backdrop{background:rgba(5,18,32,.58);backdrop-filter:blur(5px)}
+      .asistia-mobile-connection-dialog h2{margin:0 0 7px;color:#0b1d33}
+      .asistia-mobile-connection-dialog p{color:#647589;font-size:12px;line-height:1.6}
+      .asistia-mobile-url{padding:14px;border:1px solid #dce5ee;border-radius:12px;background:#f6f9fc;color:#0b1d33;font-size:14px;font-weight:800;overflow-wrap:anywhere;user-select:all}
+      .asistia-mobile-connection-status{padding:12px 14px;border-radius:12px;background:#fff4e5;color:#8b5b13;font-size:12px;line-height:1.5}
+      .asistia-mobile-connection-status.ready{background:#e8f5ee;color:#176144}
       @media(max-width:560px){.asistia-mobile-settings-dialog .asistia-settings-grid{grid-template-columns:1fr}}      .asistia-mobile-list{display:grid;gap:8px;margin-top:12px}
       .asistia-mobile-item{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 12px;border:1px solid #e8edf2;border-radius:12px;background:#fbfcfe}
       .asistia-mobile-item strong{display:block;color:#142b43;font-size:13px}
@@ -247,6 +254,68 @@
     });
   };
 
+  const openMobileConnection = async () => {
+    if (!window.asistiaDesktop?.getMobileConnectionInfo) {
+      window.alert('No está disponible la información de conexión móvil.');
+      return;
+    }
+    try {
+      const info = await window.asistiaDesktop.getMobileConnectionInfo();
+      const dialog = document.createElement('dialog');
+      dialog.className = 'asistia-mobile-connection-dialog';
+      dialog.innerHTML = `
+        <h2>Acceso a ASISTIA Móvil</h2>
+        <p>La aplicación móvil funciona dentro de la red local del establecimiento. No se requiere una cuenta externa ni un servidor de pago.</p>
+        <div id="asistiaMobileConnectionStatus" class="asistia-mobile-connection-status"></div>
+        <label>Dirección para los teléfonos</label>
+        <div id="asistiaMobileUrl" class="asistia-mobile-url"></div>
+        <p id="asistiaMobileCertPath"></p>
+        <p id="asistiaMobileFirewall"></p>
+        <p><strong>Primer uso en cada teléfono:</strong> comparte el archivo <em>asistia-local-root.cer</em> de esta computadora e instálalo como certificado de confianza. En iPhone también hay que habilitar confianza completa para esa autoridad; Android puede solicitar instalarlo como certificado de CA. Después abre la dirección HTTPS anterior desde el Wi-Fi del negocio.</p>
+        <p>El certificado es local y gratuito. Si se reinstala ASISTIA o cambia la autoridad certificadora, habrá que volver a confiar en el nuevo certificado en los teléfonos.</p>
+        <div class="asistia-mobile-actions">
+          <button type="button" class="asistia-settings-secondary" id="asistiaMobileCertFolder">Abrir carpeta del certificado</button>
+          <button type="button" class="asistia-settings-secondary" id="asistiaMobileConnectionClose">Cerrar</button>
+          <button type="button" class="asistia-settings-save" id="asistiaMobileCopyUrl">Copiar dirección</button>
+        </div>`;
+      const status = dialog.querySelector('#asistiaMobileConnectionStatus');
+      const url = dialog.querySelector('#asistiaMobileUrl');
+      const certPath = dialog.querySelector('#asistiaMobileCertPath');
+      const firewall = dialog.querySelector('#asistiaMobileFirewall');
+      if (info.ready) {
+        status.classList.add('ready');
+        status.textContent = 'HTTPS local preparado en esta computadora.';
+        url.textContent = info.mobileUrl;
+        certPath.textContent = 'Certificado raíz para instalar en teléfonos: ' + info.rootCertificatePath;
+        firewall.textContent = info.firewallConfigured
+          ? 'Firewall: regla creada para el puerto HTTPS en perfil Privado y subred local.'
+          : 'Firewall: no se pudo crear la regla automáticamente. ' + (info.firewallMessage || 'Puede requerir permisos de administrador y que la red de Windows esté configurada como Privada.');
+      } else {
+        status.textContent = 'HTTPS local todavía no está disponible. ' + (info.error || 'Conecta esta computadora a la red Wi-Fi del establecimiento y reinicia ASISTIA.');
+        url.textContent = 'No disponible';
+        certPath.textContent = '';
+        firewall.textContent = '';
+      }
+      dialog.querySelector('#asistiaMobileCertFolder').addEventListener('click', async () => {
+        try { await window.asistiaDesktop.openMobileCertificateFolder(); }
+        catch { window.alert('No se pudo abrir la carpeta del certificado.'); }
+      });
+      dialog.querySelector('#asistiaMobileConnectionClose').addEventListener('click', () => dialog.close());
+      dialog.querySelector('#asistiaMobileCopyUrl').disabled = !info.ready;
+      dialog.querySelector('#asistiaMobileCopyUrl').addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(info.mobileUrl);
+          dialog.querySelector('#asistiaMobileCopyUrl').textContent = 'Copiado';
+        } catch { window.alert('No se pudo copiar la dirección.'); }
+      });
+      dialog.addEventListener('close', () => dialog.remove(), { once: true });
+      document.body.appendChild(dialog);
+      dialog.showModal();
+    } catch(error) {
+      window.alert(error?.message || 'No se pudo consultar la conexión móvil.');
+    }
+  };
+
   const openMobileSettings = async () => {
     if (!window.asistiaDesktop?.getMobileSettings || !window.asistiaDesktop?.getMobileNetworkInfo) {
       window.alert('No está disponible el servicio local de ASISTIA.');
@@ -352,8 +421,9 @@
       panel = document.createElement('section');
       panel.id = 'asistiaMobileActivity';
       panel.className = 'card asistia-mobile-panel';
-      panel.innerHTML = '<div class="page-head"><div><h3>Registros móviles recientes</h3><p class="hint">Eventos recibidos en la base local de ASISTIA.</p></div><div><span class="badge badge-info">Wi-Fi local</span> <button type="button" class="btn btn-ghost btn-sm" id="asistiaMobileSettings">Configurar móvil</button></div></div><div class="asistia-mobile-list" id="asistiaMobileList"><p class="hint">Consultando registros…</p></div>';
+      panel.innerHTML = '<div class="page-head"><div><h3>Registros móviles recientes</h3><p class="hint">Eventos recibidos en la base local de ASISTIA.</p></div><div><span class="badge badge-info">Wi-Fi local</span> <button type="button" class="btn btn-ghost btn-sm" id="asistiaMobileSettings">Configurar móvil</button> <button type="button" class="btn btn-ghost btn-sm" id="asistiaMobileConnection">Ver acceso</button></div></div><div class="asistia-mobile-list" id="asistiaMobileList"><p class="hint">Consultando registros…</p></div>';
       panel.querySelector('#asistiaMobileSettings').addEventListener('click', openMobileSettings);
+      panel.querySelector('#asistiaMobileConnection').addEventListener('click', openMobileConnection);
       pageHead.insertAdjacentElement('afterend', panel);
     }
     mobileActivityInFlight = true;
