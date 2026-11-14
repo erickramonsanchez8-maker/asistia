@@ -315,8 +315,10 @@
         <div id="asistiaMobileUrl" class="asistia-mobile-url"></div>
         <p id="asistiaMobileCertPath"></p>
         <p id="asistiaMobileFirewall"></p>
-        <p><strong>Primer uso en cada teléfono:</strong> comparte el archivo <em>asistia-local-root.cer</em> de esta computadora e instálalo como certificado de confianza. En iPhone también hay que habilitar confianza completa para esa autoridad; Android puede solicitar instalarlo como certificado de CA. Después abre la dirección HTTPS anterior desde el Wi-Fi del negocio.</p>
-        <p>El certificado es local y gratuito. Si se reinstala ASISTIA o cambia la autoridad certificadora, habrá que volver a confiar en el nuevo certificado en los teléfonos.</p>
+        <p><strong>Android:</strong> comparte <em>asistia-local-root.cer</em> con el teléfono, abre el archivo y sigue la opción del sistema para instalarlo como certificado de CA. La ruta exacta cambia según la marca y la versión de Android.</p>
+        <p><strong>iPhone:</strong> comparte y abre el archivo en el teléfono, instala el perfil desde Ajustes → Perfil descargado y después activa la confianza completa en Ajustes → General → Información → Ajustes de confianza de certificados.</p>
+        <p>Al terminar, conecta el teléfono al mismo Wi-Fi del negocio y abre la dirección HTTPS. La red Wi-Fi de Windows debe estar configurada como <strong>Privada</strong>; el firewall de ASISTIA solo permite conexiones desde la subred local. No compartas el certificado raíz fuera de los dispositivos autorizados del negocio.</p>
+        <p>El certificado se genera localmente y no tiene costo. Si cambia la autoridad certificadora, habrá que volver a instalarla en los teléfonos.</p>
         <div class="asistia-mobile-actions">
           <button type="button" class="asistia-settings-secondary" id="asistiaMobileCertFolder">Abrir carpeta del certificado</button>
           <button type="button" class="asistia-settings-secondary" id="asistiaMobileConnectionClose">Cerrar</button>
@@ -439,7 +441,7 @@
           const result = await window.asistiaDesktop.saveMobileSettings(body);
           if (!result?.ok) throw new Error('No se pudo guardar la configuración.');
           dialog.close();
-          window.alert('ASISTIA Móvil quedó configurado para la sucursal ' + body.branch + '. La conexión HTTPS y el certificado de los teléfonos aún deben habilitarse antes de registrar asistencia real.');
+          window.alert('Configuración guardada para la sucursal ' + body.branch + '. ASISTIA prepara HTTPS al iniciar en esta red. Antes de marcar desde el teléfono, instala y confía el certificado raíz y comprueba que el Wi-Fi de Windows esté configurado como Privado.');
           refreshMobileActivity();
         } catch (error) {
           window.alert(error?.message || 'No se pudo guardar la configuración.');
