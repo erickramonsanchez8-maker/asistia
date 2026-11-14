@@ -874,6 +874,25 @@ function evaluateAfterPunch(s){
   }
 }
 
+async function recordDesktopAttendanceEvent(emp,eventType,occurredAt){
+  const bridge=window.asistiaDesktop?.recordAttendanceEvent;
+  if(typeof bridge!=="function") return {ok:true,localOnly:true};
+  try{
+    const result=await bridge({
+      id:String(emp.id),
+      fullName:employeeName(emp),
+      employeeNumber:String(emp.employeeNumber||""),
+      branch:String(emp.branch||"Principal"),
+      active:emp.active!==false,
+      eventType,
+      occurredAt
+    });
+    return result&&result.ok ? result : {ok:false,error:"ASISTIA no confirmó el registro en la base central."};
+  }catch(error){
+    return {ok:false,error:error&&error.message?error.message:"No se pudo conectar con el servicio local de ASISTIA."};
+  }
+}
+
 async function punch(emp, pin){
   const now = Date.now();
   if(now - ui.lastPunchAt < 1200) return {ok:false, error:"Espere un momento para evitar un registro duplicado."};
@@ -915,12 +934,15 @@ async function punch(emp, pin){
     if(sch && sch.overnight && minutesOf(z.time) < minutesOf(sch.end)){
       operationalDate = addDays(z.date, -1);
     }
+    const inIso = nowIso();
+    const central = await recordDesktopAttendanceEvent(emp,"clock_in",inIso);
+    if(!central.ok) return {ok:false,error:central.error};
     const snap = scheduleFor(emp, operationalDate);
     const sess = {
       id: uid("ses"),
       employeeId: emp.id,
       operationalDate,
-      clockIn: nowIso(),
+      clockIn: inIso,
       clockOut: null,
       scheduleSnapshot: snap,
       autoBreakPolicy: "scheduled-v1",
@@ -944,6 +966,8 @@ async function punch(emp, pin){
   if(new Date(outIso) < new Date(open.clockIn) && !(open.scheduleSnapshot && open.scheduleSnapshot.overnight)){
     return {ok:false, error:"La hora de salida no puede ser anterior a la entrada."};
   }
+  const central = await recordDesktopAttendanceEvent(emp,"clock_out",outIso);
+  if(!central.ok) return {ok:false,error:central.error};
   open.clockOut = outIso;
   open.durationMs = sessionDurationMs(open);
   evaluateAfterPunch(open);
@@ -2382,7 +2406,7 @@ function showSession(id){
     <p>Entrada real: ${formatTimeSec(s.clockIn)} · Salida real: ${s.clockOut?formatTimeSec(s.clockOut):"sin salida"}</p>
     <p>Programado: ${(s.scheduleSnapshot&&s.scheduleSnapshot.start)||"—"} – ${(s.scheduleSnapshot&&s.scheduleSnapshot.end)||"—"}</p>
     <p>Duración: ${durationLabel(sessionDurationMs(s))} · Retardo: ${s.lateMinutes||0} min</p>
-    <p>Origen: ${s.source==="kiosk"?"registro automático":"administrativo"} ${s.corrected?"· corregido":""}</p>
+    <p>Origen: ${s.source==="mobile"?"ASISTIA Móvil":s.source==="kiosk"?"registro automático":"administrativo"} ${s.corrected?"· corregido":""}</p>
     ${s.corrections&&s.corrections.length? `<h4>Historial de correcciones</h4><ul>${s.corrections.map(c=>`<li>${escapeHtml(c.at)} · ${escapeHtml(c.by)} · ${escapeHtml(c.reason)}<br>Antes: ${escapeHtml(c.before)} → Después: ${escapeHtml(c.after)}</li>`).join("")}</ul>`:""}
     <button class="btn btn-navy" id="cNo">Cerrar</button>`);
   document.getElementById("cNo").onclick = closeModal;
@@ -2601,6 +2625,93 @@ function bindBackup(){
 document.addEventListener("keydown", (e)=>{
   if(e.key==="Escape") closeModal();
 });
+
+// Convierte los eventos validados de ASISTIA Móvil en jornadas del mismo modelo
+// que ya utilizan el historial, los incidentes y los reportes de escritorio.
+window.asistiaApplyMobileEvents = function(events){
+  if(!db || !Array.isArray(events) || !events.length) return {ok:true,changed:0};
+  const ordered=events.filter(event=>event&&event.id&&event.employeeId&&
+    (event.eventType==="clock_in"||event.eventType==="clock_out")&&event.occurredAt)
+    .slice().sort((a,b)=>Date.parse(a.occurredAt)-Date.parse(b.occurredAt));
+  const pending=new Map();
+  const projections=[];
+  const makeSession=(entry,exit)=>{
+    const emp=empById(entry.employeeId);
+    if(!emp || !emp.active) return null;
+    const local=zoned(new Date(entry.occurredAt));
+    let operationalDate=local.date;
+    let snap=scheduleFor(emp,operationalDate);
+    if(snap && snap.overnight && minutesOf(local.time)<minutesOf(snap.end)){
+      operationalDate=addDays(local.date,-1);
+    }
+    snap=scheduleFor(emp,operationalDate);
+    const session={
+      id:"mobile_"+String(entry.id).replace(/[^A-Za-z0-9_-]/g,"_"),
+      employeeId:emp.id,
+      operationalDate,
+      clockIn:entry.occurredAt,
+      clockOut:exit?exit.occurredAt:null,
+      scheduleSnapshot:snap,
+      autoBreakPolicy:"scheduled-v1",
+      lateMinutes:0,
+      source:"mobile",
+      corrected:false,
+      corrections:[],
+      mealBreaks:[],
+      createdAt:entry.receivedAt||entry.occurredAt,
+      mobileEventIds:[entry.id,...(exit?[exit.id]:[])],
+      mobileEvidence:{
+        entry:{accuracyM:entry.accuracyM,distanceM:entry.distanceM,validatedAt:entry.validatedAt||null},
+        exit:exit?{accuracyM:exit.accuracyM,distanceM:exit.distanceM,validatedAt:exit.validatedAt||null}:null
+      }
+    };
+    session.lateMinutes=computeLate(session);
+    if(session.clockOut) session.durationMs=sessionDurationMs(session);
+    return session;
+  };
+  for(const event of ordered){
+    if(event.eventType==="clock_in"){
+      const previous=pending.get(event.employeeId);
+      if(previous) projections.push(makeSession(previous,null));
+      pending.set(event.employeeId,event);
+    }else{
+      const entry=pending.get(event.employeeId);
+      if(entry){
+        projections.push(makeSession(entry,event));
+        pending.delete(event.employeeId);
+      }
+    }
+  }
+  pending.forEach(entry=>projections.push(makeSession(entry,null)));
+  const byId=new Map(db.sessions.map(session=>[session.id,session]));
+  let changed=0;
+  for(const projected of projections){
+    if(!projected) continue;
+    const existing=byId.get(projected.id);
+    if(existing?.corrected) continue;
+    const same=existing && existing.clockIn===projected.clockIn &&
+      existing.clockOut===projected.clockOut &&
+      JSON.stringify(existing.mobileEventIds||[])===JSON.stringify(projected.mobileEventIds||[]);
+    if(!same){
+      const merged={
+        ...(existing||{}),
+        ...projected,
+        corrected:Boolean(existing?.corrected),
+        corrections:existing?.corrections||[],
+        mealBreaks:existing?.mealBreaks||[]
+      };
+      byId.set(projected.id,merged);
+      evaluateAfterPunch(merged);
+      changed++;
+    }
+  }
+  if(changed){
+    db.sessions=Array.from(byId.values()).sort((a,b)=>Date.parse(b.clockIn)-Date.parse(a.clockIn));
+    if(!saveDb()) return {ok:false,changed:0};
+    if(ui.mode==="admin" && !document.querySelector(".modal-back,dialog[open]")) renderAdmin();
+  }
+  return {ok:true,changed};
+};
 
 async function bootAsistia(){
   try{
