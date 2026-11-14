@@ -6,7 +6,7 @@ import rateLimit from 'express-rate-limit';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
-import { randomUUID, createHash } from 'node:crypto';
+import { randomUUID, randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import { mkdirSync, readFileSync } from 'node:fs';
 import https from 'node:https';
 import { registerMobileRoutes } from './mobile/mobile-routes.js';
@@ -179,11 +179,17 @@ const proxyHops = Number(process.env.TRUST_PROXY_HOPS || 0);
 if (Number.isInteger(proxyHops) && proxyHops > 0) app.set('trust proxy', proxyHops);
 app.use('/api/auth', rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: 'draft-7', legacyHeaders: false }));
 
-const loginSchema = z.object({ email: z.string().email().max(254), password: z.string().min(1).max(200) });
+const loginSchema = z.object({
+  email: z.string().email().max(254).optional(),
+  employeeNumber: z.string().trim().min(1).max(40).optional(),
+  password: z.string().min(1).max(200)
+}).refine(input => Boolean(input.email || input.employeeNumber), 'Ingresa tu correo o número de empleado.');
 app.post('/api/auth/login', (req,res,next) => {
   try {
     const input = loginSchema.parse(req.body);
-    const candidates = db.prepare('SELECT * FROM users WHERE email=? AND active=1').all(input.email.toLowerCase());
+    const candidates = input.email
+      ? db.prepare('SELECT * FROM users WHERE email=? AND active=1').all(input.email.toLowerCase())
+      : db.prepare(`SELECT u.* FROM users u JOIN employees e ON e.id=u.employee_id AND e.company_id=u.company_id WHERE e.employee_number=? AND u.role='worker' AND u.active=1`).all(input.employeeNumber);
     const matches = candidates.filter(candidate => bcrypt.compareSync(input.password, candidate.password_hash));
     // Evita autenticar de forma ambigua si una misma dirección existe en varias empresas.
     if (matches.length !== 1) throw appError(401, 'Credenciales incorrectas o cuenta ambigua. Usa un correo único por usuario.'); 
@@ -337,6 +343,93 @@ app.post('/api/employees', authenticate, roles('admin','supervisor'), (req,res,n
     writeAudit(req.user.companyId,req.user.id,'employee.created','employee',id,{employeeNumber:input.employeeNumber});
     res.status(201).json({employee:{id,...input,createdAt:created,active:1}});
   } catch(e) { next(e); }
+});
+function requireDesktopBridge(req,res,next) {
+  const remote = String(req.socket?.remoteAddress || '');
+  const isLoopback = ['127.0.0.1','::1','::ffff:127.0.0.1'].includes(remote);
+  const expected = Buffer.from(process.env.DESKTOP_BRIDGE_TOKEN || '', 'utf8');
+  const supplied = Buffer.from(String(req.get('x-asistia-desktop-bridge') || ''), 'utf8');
+  if (!isLoopback || expected.length < 32 || expected.length !== supplied.length || !timingSafeEqual(expected, supplied)) {
+    return next(appError(403, 'Acceso interno de ASISTIA no autorizado.'));
+  }
+  next();
+}
+const desktopMobileEmployeeSchema = z.object({
+  id: z.string().trim().min(3).max(120).regex(/^[A-Za-z0-9_-]+$/),
+  fullName: z.string().trim().min(2).max(160),
+  employeeNumber: z.string().trim().max(40).optional().default(''),
+  branch: z.string().trim().min(1).max(100).optional().default('Principal'),
+  active: z.boolean().optional().default(true)
+});
+app.post('/api/desktop/mobile-access', requireDesktopBridge, (req,res,next) => {
+  try {
+    const input = desktopMobileEmployeeSchema.parse(req.body);
+    const admin = db.prepare("SELECT id,company_id FROM users WHERE role='admin' AND active=1 ORDER BY created_at LIMIT 1").get();
+    if (!admin) throw appError(503, 'ASISTIA todavía no ha terminado su configuración inicial.');
+    const employeeNumber = input.employeeNumber || ('AS-' + createHash('sha256').update(input.id).digest('hex').slice(0,10).toUpperCase());
+    const numberOwner = db.prepare('SELECT id FROM employees WHERE company_id=? AND employee_number=?').get(admin.company_id, employeeNumber);
+    if (numberOwner && numberOwner.id !== input.id) throw appError(409, 'El número de empleado ya está vinculado a otra ficha.');
+    const idOwner = db.prepare('SELECT company_id FROM employees WHERE id=?').get(input.id);
+    if (idOwner && idOwner.company_id !== admin.company_id) throw appError(409, 'El identificador de empleado ya pertenece a otra empresa.');
+
+    const employee = {
+      id: input.id,
+      companyId: admin.company_id,
+      employeeNumber,
+      fullName: input.fullName,
+      branch: input.branch,
+      active: input.active
+    };
+    const existingUser = db.prepare("SELECT id FROM users WHERE company_id=? AND employee_id=? AND role='worker' LIMIT 1")
+      .get(admin.company_id, input.id);
+    const userEmail = 'mobile+' + createHash('sha256').update(admin.company_id + ':' + input.id).digest('hex').slice(0,24) + '@asistia.local';
+    const emailOwner = db.prepare('SELECT id FROM users WHERE email=? COLLATE NOCASE LIMIT 1').get(userEmail);
+    if (emailOwner && emailOwner.id !== existingUser?.id) throw appError(409, 'No se pudo reservar el identificador interno de acceso móvil.');
+    const temporaryPassword = randomBytes(24).toString('base64url');
+    const created = now();
+    const workerId = existingUser?.id || randomUUID();
+
+    db.transaction(() => {
+      db.prepare(`INSERT INTO employees(id,company_id,employee_number,full_name,branch,active,created_at)
+        VALUES(?,?,?,?,?,?,?)
+        ON CONFLICT(id) DO UPDATE SET employee_number=excluded.employee_number,
+          full_name=excluded.full_name,branch=excluded.branch,active=excluded.active`)
+        .run(employee.id, employee.companyId, employee.employeeNumber, employee.fullName, employee.branch, employee.active ? 1 : 0, created);
+      if (existingUser) {
+        db.prepare("UPDATE users SET name=?,email=?,password_hash=?,active=?,token_version=token_version+1 WHERE id=? AND company_id=?")
+          .run(employee.fullName,userEmail,bcrypt.hashSync(temporaryPassword,12),employee.active ? 1 : 0,workerId,admin.company_id);
+      } else {
+        db.prepare("INSERT INTO users(id,company_id,name,email,password_hash,role,employee_id,active,created_at) VALUES(?,?,?,?,?,'worker',?,?,?)")
+          .run(workerId,admin.company_id,employee.fullName,userEmail,bcrypt.hashSync(temporaryPassword,12),employee.id,employee.active ? 1 : 0,created);
+      }
+      writeAudit(admin.company_id,admin.id,'employee.mobile_access_generated','employee',employee.id,{
+        employeeNumber:employee.employeeNumber,reset:Boolean(existingUser),active:employee.active
+      });
+    })();
+
+    res.status(existingUser ? 200 : 201).json({
+      ok:true,
+      employee:{id:employee.id,employeeNumber:employee.employeeNumber,fullName:employee.fullName,branch:employee.branch},
+      access:{login:employee.employeeNumber,password:temporaryPassword,temporary:true},
+      reset:Boolean(existingUser)
+    });
+  } catch(error) { next(error); }
+});
+app.get('/api/desktop/mobile-recent', requireDesktopBridge, (req,res,next) => {
+  try {
+    const admin = db.prepare("SELECT company_id FROM users WHERE role='admin' AND active=1 ORDER BY created_at LIMIT 1").get();
+    if (!admin) throw appError(503, 'ASISTIA todavía no ha terminado su configuración inicial.');
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
+    const rows = db.prepare(
+      'SELECT e.id,e.employee_id AS employeeId,p.employee_number AS employeeNumber,p.full_name AS fullName,' +
+      'p.branch,e.event_type AS eventType,e.occurred_at AS occurredAt,e.source,' +
+      'm.accuracy_m AS accuracyM,m.distance_m AS distanceM,m.accepted_at AS validatedAt ' +
+      'FROM attendance_events e JOIN employees p ON p.id=e.employee_id ' +
+      'JOIN mobile_attendance_evidence m ON m.attendance_event_id=e.id ' +
+      'WHERE e.company_id=? ORDER BY e.occurred_at DESC LIMIT ?'
+    ).all(admin.company_id,limit);
+    res.json({records:rows});
+  } catch(error) { next(error); }
 });
 app.patch('/api/employees/:id/deactivate', authenticate, roles('admin'), (req,res,next) => {
   try {
