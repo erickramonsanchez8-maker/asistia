@@ -10,5 +10,6 @@ contextBridge.exposeInMainWorld('asistiaDesktop', Object.freeze({
   installUpdate: (rawPackage, legacyStorageData) => ipcRenderer.invoke('asistia:install-update', rawPackage, legacyStorageData),
   getLegacyStorage: () => ipcRenderer.invoke('asistia:legacy-storage'),
   provisionMobileAccess: employee => ipcRenderer.invoke('asistia:provision-mobile-access', employee),
-  getMobileRecent: () => ipcRenderer.invoke('asistia:mobile-recent')
+  getMobileRecent: () => ipcRenderer.invoke('asistia:mobile-recent'),
+  syncEmployees: employees => ipcRenderer.invoke('asistia:sync-employees', employees)
 }));
