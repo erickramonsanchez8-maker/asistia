@@ -16,7 +16,7 @@ function isValidIpv4Cidr(value) {
   const prefix = parts.length === 1 ? 32 : Number(parts[1]);
   if (!Number.isInteger(prefix) || prefix < 0 || prefix > 32) return false;
   const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
-  const networkStart = ipv4ToInt(parts[0]) & mask;
+  const networkStart = (ipv4ToInt(parts[0]) & mask) >>> 0;
   const networkEnd = networkStart + (2 ** (32 - prefix)) - 1;
   const privateRanges = [
     [0x0a000000, 0x0affffff], // 10.0.0.0/8
