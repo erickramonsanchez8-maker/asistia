@@ -193,6 +193,10 @@ ipcMain.handle('asistia:provision-mobile-access', async (_event, employee) => {
 ipcMain.handle('asistia:mobile-recent', async () => {
   return desktopBridgeRequest('/api/desktop/mobile-recent?limit=20');
 });
+ipcMain.handle('asistia:sync-employees', async (_event, employees) => {
+  if (!Array.isArray(employees)) throw new Error('La lista de empleados no es válida.');
+  return desktopBridgeRequest('/api/desktop/sync-employees', { method: 'POST', body: employees });
+});
 
 ipcMain.handle('asistia:open-data-folder', async () => {
   const location = app.getPath('userData');
