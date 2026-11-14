@@ -1,8 +1,28 @@
 param(
   [Parameter(Mandatory=$true)][string]$OutputDirectory,
-  [Parameter(Mandatory=$true)][string]$ServerIps
+  [Parameter(Mandatory=$true)][string]$ServerIps,
+  [switch]$FirewallOnly
 )
 $ErrorActionPreference = 'Stop'
+
+function Set-AsistiaFirewallRule {
+  $displayName = 'ASISTIA Móvil HTTPS (red local)'
+  $rule = Get-NetFirewallRule -DisplayName $displayName -ErrorAction SilentlyContinue
+  if (-not $rule) {
+    New-NetFirewallRule -DisplayName $displayName -Direction Inbound -Action Allow -Enabled True -Protocol TCP -LocalPort 43178 -RemoteAddress LocalSubnet -Profile Private -Description 'Permite ASISTIA Móvil únicamente desde la subred local privada.' | Out-Null
+    return
+  }
+  Set-NetFirewallRule -InputObject $rule -Enabled True -Direction Inbound -Action Allow -Profile Private | Out-Null
+  $addressFilter = Get-NetFirewallAddressFilter -AssociatedNetFirewallRule $rule
+  if ($addressFilter) { Set-NetFirewallAddressFilter -InputObject $addressFilter -RemoteAddress LocalSubnet | Out-Null }
+  $portFilter = Get-NetFirewallPortFilter -AssociatedNetFirewallRule $rule
+  if ($portFilter) { Set-NetFirewallPortFilter -InputObject $portFilter -Protocol TCP -LocalPort 43178 | Out-Null }
+}
+
+if ($FirewallOnly) {
+  Set-AsistiaFirewallRule
+  exit 0
+}
 if ([string]::IsNullOrWhiteSpace($env:ASISTIA_CERT_PASSWORD)) { throw 'Falta la contraseña local del certificado.' }
 New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
 $caSubject = 'CN=ASISTIA Local Root CA'
@@ -39,10 +59,29 @@ $firewallConfigured = $false
 $firewallMessage = ''
 try {
   $rule = Get-NetFirewallRule -DisplayName 'ASISTIA Móvil HTTPS (red local)' -ErrorAction SilentlyContinue
-  if (-not $rule) { New-NetFirewallRule -DisplayName 'ASISTIA Móvil HTTPS (red local)' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 43178 -RemoteAddress LocalSubnet -Profile Private -Description 'Permite ASISTIA Móvil únicamente desde la subred local privada.' | Out-Null }
+  if (-not $rule) {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+    if ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+      Set-AsistiaFirewallRule
+    } else {
+      # La regla requiere privilegios elevados. Se solicita UAC una sola vez al crearla;
+      # el proceso elevado ejecuta únicamente la configuración acotada del firewall.
+      $arguments = @(
+        '-NoProfile','-ExecutionPolicy','Bypass','-File',('"' + $PSCommandPath + '"'),
+        '-OutputDirectory',('"' + $OutputDirectory + '"'),
+        '-ServerIps',('"' + $ServerIps + '"'),
+        '-FirewallOnly'
+      )
+      $elevated = Start-Process -FilePath 'powershell.exe' -ArgumentList $arguments -Verb RunAs -Wait -PassThru -WindowStyle Hidden
+      if ($elevated.ExitCode -ne 0) { throw 'Windows no confirmó la creación de la regla de firewall.' }
+    }
+  }
+  $rule = Get-NetFirewallRule -DisplayName 'ASISTIA Móvil HTTPS (red local)' -ErrorAction SilentlyContinue
+  if (-not $rule -or $rule.Enabled -ne 'True') { throw 'La regla de firewall no quedó habilitada.' }
   $firewallConfigured = $true
 } catch {
-  $firewallMessage = 'No se pudo crear la regla automáticamente. Puede requerir permiso de administrador y perfil de red Privado.'
+  $firewallMessage = 'No se pudo habilitar el acceso local. Si rechazaste el aviso de Windows, vuelve a abrir ASISTIA y autoriza la regla; la red de Windows debe estar configurada como Privada. Detalle: ' + $_.Exception.Message
 }
 $resultPath = Join-Path $OutputDirectory 'mobile-certificate-status.json'
 @{
