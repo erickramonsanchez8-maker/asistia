@@ -518,9 +518,11 @@
   sync();
   checkTrial();
   setInterval(checkTrial, 60000);
-  setInterval(syncExistingEmployees, 8000);
+  setInterval(() => syncExistingEmployees().then(syncLegacyAttendance), 8000);
+  setInterval(syncMobileEventsToReports, 5000);
   setInterval(refreshMobileActivity, 15000);
   window.addEventListener('focus', checkHealth);
   window.addEventListener('focus', checkTrial);
-  window.addEventListener('focus', syncExistingEmployees);
+  window.addEventListener('focus', () => syncExistingEmployees().then(syncLegacyAttendance));
+  window.addEventListener('focus', syncMobileEventsToReports);
 })();
