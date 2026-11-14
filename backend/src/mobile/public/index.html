@@ -14,8 +14,9 @@
   <main class="app-shell">
     <header class="topbar">
       <a class="brand" href="/mobile/" aria-label="ASISTIA Móvil">
-        <span class="brand-mark">A</span>
-        <span>ASISTIA <small>MÓVIL</small></span>
+        <img class="brand-logo" src="/mobile/asistia-logo.svg" alt="ASISTIA">
+        <span class="brand-divider" aria-hidden="true"></span>
+        <span class="brand-mobile">MÓVIL</span>
       </a>
       <button id="install-button" class="text-button hidden" type="button">Instalar</button>
     </header>
@@ -24,8 +25,8 @@
       <h1>Tu jornada,<br><span>en orden.</span></h1>
       <p class="muted">Inicia sesión con la cuenta de trabajador que te asignó tu empresa.</p>
       <form id="login-form" class="panel form-panel">
-        <label for="email">Correo de acceso</label>
-        <input id="email" name="email" type="email" autocomplete="username" required maxlength="254" placeholder="empleado@empresa.com">
+        <label for="employee-number">Número de empleado</label>
+        <input id="employee-number" name="employeeNumber" type="text" inputmode="text" autocomplete="username" required maxlength="40" placeholder="Tu número de empleado">
         <label for="password">Contraseña</label>
         <input id="password" name="password" type="password" autocomplete="current-password" required maxlength="200" placeholder="Tu contraseña">
         <button class="primary-button" type="submit">Iniciar sesión</button>
