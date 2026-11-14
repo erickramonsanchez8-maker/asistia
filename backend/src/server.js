@@ -718,14 +718,23 @@ bootstrap();
 
 const server=app.listen(PORT,process.env.HOST||'127.0.0.1',()=>console.log(`ASISTIA API 0.2 escuchando en ${process.env.HOST||'127.0.0.1'}:${PORT}`));
 let mobileHttpsServer = null;
+const mobilePfxPath = process.env.MOBILE_HTTPS_PFX_PATH || '';
+const mobilePfxPassphrase = process.env.MOBILE_HTTPS_PFX_PASSPHRASE || '';
 const mobileKeyPath = process.env.MOBILE_HTTPS_KEY_PATH || '';
 const mobileCertPath = process.env.MOBILE_HTTPS_CERT_PATH || '';
-if (mobileKeyPath || mobileCertPath) {
-  if (!mobileKeyPath || !mobileCertPath) throw new Error('Configura MOBILE_HTTPS_KEY_PATH y MOBILE_HTTPS_CERT_PATH juntos.');
+if (mobilePfxPath || mobileKeyPath || mobileCertPath) {
   const mobileHttpsPort = Number(process.env.MOBILE_HTTPS_PORT || 43178);
   const mobileHttpsHost = process.env.MOBILE_HTTPS_HOST || '0.0.0.0';
   if (!Number.isInteger(mobileHttpsPort) || mobileHttpsPort < 1 || mobileHttpsPort > 65535) throw new Error('MOBILE_HTTPS_PORT no es válido.');
-  mobileHttpsServer = https.createServer({ key: readFileSync(resolve(mobileKeyPath)), cert: readFileSync(resolve(mobileCertPath)) }, app);
+  let tlsOptions;
+  if (mobilePfxPath) {
+    if (mobileKeyPath || mobileCertPath) throw new Error('Usa PFX o el par KEY/CERT, no ambos.');
+    tlsOptions = { pfx: readFileSync(resolve(mobilePfxPath)), passphrase: mobilePfxPassphrase };
+  } else {
+    if (!mobileKeyPath || !mobileCertPath) throw new Error('Configura MOBILE_HTTPS_KEY_PATH y MOBILE_HTTPS_CERT_PATH juntos.');
+    tlsOptions = { key: readFileSync(resolve(mobileKeyPath)), cert: readFileSync(resolve(mobileCertPath)) };
+  }
+  mobileHttpsServer = https.createServer(tlsOptions, app);
   mobileHttpsServer.listen(mobileHttpsPort, mobileHttpsHost, () => console.log('ASISTIA Móvil HTTPS escuchando en ' + mobileHttpsHost + ':' + mobileHttpsPort));
 }
 function shutdown() {
