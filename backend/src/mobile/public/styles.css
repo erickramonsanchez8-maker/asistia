@@ -18,9 +18,10 @@ button, input { font: inherit; }
 button { cursor: pointer; }
 .app-shell { width: min(100%, 540px); min-height: 100vh; margin: 0 auto; padding: 20px 20px max(26px, env(safe-area-inset-bottom)); }
 .topbar { height: 54px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 38px; }
-.brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; color: var(--navy); font-size: 15px; font-weight: 850; letter-spacing: .08em; }
-.brand small { display: block; margin-top: 2px; color: var(--muted); font-size: 9px; letter-spacing: .22em; }
-.brand-mark { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 12px; color: #fff; background: linear-gradient(145deg, #1d4670, #07182b); font-size: 20px; font-weight: 800; }
+.brand { display: inline-flex; align-items: center; gap: 11px; min-width: 0; text-decoration: none; color: var(--navy); font-size: 15px; font-weight: 850; letter-spacing: .08em; }
+.brand-logo { display: block; width: 142px; max-width: min(42vw, 142px); height: 44px; object-fit: contain; object-position: left center; }
+.brand-divider { width: 1px; height: 28px; background: #d9e1e9; }
+.brand-mobile { color: #6f8194; font-size: 10px; font-weight: 850; letter-spacing: .2em; }
 .view { animation: appear .28s ease both; }
 .login-view { padding-top: 8px; }
 .eyebrow { color: var(--blue); font-size: 10px; font-weight: 800; letter-spacing: .18em; }
