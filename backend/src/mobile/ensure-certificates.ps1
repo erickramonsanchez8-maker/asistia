@@ -17,9 +17,21 @@ if (-not $trusted) { Import-Certificate -FilePath $rootPath -CertStoreLocation C
 $ips = @($ServerIps.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 if ($ips.Count -lt 1) { throw 'No se detectó una dirección IPv4 privada para ASISTIA Móvil.' }
 $computerName = [System.Net.Dns]::GetHostName()
-$sanParts = @('DNS=' + $computerName) + @($ips | ForEach-Object { 'IPAddress=' + $_ })
-$sanText = '2.5.29.17={text}' + ($sanParts -join '&')
-$server = New-SelfSignedCertificate -Type Custom -Subject 'CN=ASISTIA Local Server' -CertStoreLocation Cert:\CurrentUser\My -Signer $ca -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256 -KeyExportPolicy Exportable -KeyUsage DigitalSignature,KeyEncipherment -TextExtension @($sanText,'2.5.29.37={text}1.3.6.1.5.5.7.3.1') -NotAfter (Get-Date).AddYears(2)
+$serverSubject = 'CN=ASISTIA Local Server'
+$server = $null
+$existingServers = @(Get-ChildItem Cert:\CurrentUser\My -ErrorAction SilentlyContinue | Where-Object { $_.Subject -eq $serverSubject -and $_.HasPrivateKey -and $_.NotAfter -gt (Get-Date).AddDays(30) })
+foreach ($candidate in $existingServers) {
+  $san = $candidate.Extensions | Where-Object { $_.Oid.Value -eq '2.5.29.17' } | Select-Object -First 1
+  $sanTextExisting = if ($san) { $san.Format($false) } else { '' }
+  $hasAllIps = $true
+  foreach ($ip in $ips) { if ($sanTextExisting -notmatch [regex]::Escape($ip)) { $hasAllIps = $false } }
+  if ($hasAllIps) { $server = $candidate; break }
+}
+if (-not $server) {
+  $sanParts = @('DNS=' + $computerName) + @($ips | ForEach-Object { 'IPAddress=' + $_ })
+  $sanText = '2.5.29.17={text}' + ($sanParts -join '&')
+  $server = New-SelfSignedCertificate -Type Custom -Subject $serverSubject -CertStoreLocation Cert:\CurrentUser\My -Signer $ca -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256 -KeyExportPolicy Exportable -KeyUsage DigitalSignature,KeyEncipherment -TextExtension @($sanText,'2.5.29.37={text}1.3.6.1.5.5.7.3.1') -NotAfter (Get-Date).AddYears(2)
+}
 $pfxPath = Join-Path $OutputDirectory 'asistia-mobile-server.pfx'
 $pfxPassword = ConvertTo-SecureString $env:ASISTIA_CERT_PASSWORD -AsPlainText -Force
 Export-PfxCertificate -Cert $server -FilePath $pfxPath -Password $pfxPassword -Force | Out-Null
