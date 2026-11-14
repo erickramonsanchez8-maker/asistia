@@ -637,7 +637,7 @@ function isPrivateMobileCidr(value) {
   if (parts.length > 2 || !Number.isInteger(prefix) || prefix < 0 || prefix > 32) return false;
   const address = octets.reduce((value, octet) => ((value << 8) | octet) >>> 0, 0);
   const mask = prefix === 0 ? 0 : (0xffffffff << (32-prefix)) >>> 0;
-  const start = address & mask;
+  const start = (address & mask) >>> 0;
   const end = start + (2 ** (32-prefix)) - 1;
   const ranges = [[0x0a000000,0x0affffff],[0xac100000,0xac1fffff],[0xc0a80000,0xc0a8ffff]];
   return ranges.some(([low,high]) => start >= low && end <= high);
