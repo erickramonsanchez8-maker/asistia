@@ -105,10 +105,10 @@ function writeAudit(companyId, actorId, action, entityType, entityId, details = 
   const hash = createHash('sha256').update(payload).digest('hex');
   audit.run(id, companyId, actorId, action, entityType, entityId, JSON.stringify(details), created, prev, hash);
 }
-function writeEvent({companyId, employeeId, eventType, occurredAt, source, createdBy, id = randomUUID()}) {
+function writeEvent({companyId, employeeId, eventType, occurredAt, source, createdBy, id: suppliedId}) {
   const prev = db.prepare('SELECT event_hash FROM attendance_events WHERE company_id=? ORDER BY rowid DESC LIMIT 1').get(companyId)?.event_hash || null;
   const receivedAt = now();
-  const id = randomUUID();
+  const id = suppliedId || randomUUID();
   const payload = JSON.stringify({id,companyId,employeeId,eventType,occurredAt,receivedAt,source,createdBy,prev});
   const hash = createHash('sha256').update(payload).digest('hex');
   db.prepare(`INSERT INTO attendance_events
