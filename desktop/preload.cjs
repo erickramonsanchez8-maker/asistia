@@ -11,5 +11,8 @@ contextBridge.exposeInMainWorld('asistiaDesktop', Object.freeze({
   getLegacyStorage: () => ipcRenderer.invoke('asistia:legacy-storage'),
   provisionMobileAccess: employee => ipcRenderer.invoke('asistia:provision-mobile-access', employee),
   getMobileRecent: () => ipcRenderer.invoke('asistia:mobile-recent'),
-  syncEmployees: employees => ipcRenderer.invoke('asistia:sync-employees', employees)
+  syncEmployees: employees => ipcRenderer.invoke('asistia:sync-employees', employees),
+  getMobileSettings: branch => ipcRenderer.invoke('asistia:get-mobile-settings', branch),
+  saveMobileSettings: settings => ipcRenderer.invoke('asistia:save-mobile-settings', settings),
+  getMobileNetworkInfo: () => ipcRenderer.invoke('asistia:get-mobile-network-info')
 }));
