@@ -628,6 +628,66 @@ app.get('/api/audit', authenticate, roles('admin'), (req,res,next) => {
 
 registerMobileRoutes(app, { db, authenticate, roles, writeAudit, writeEvent, now });
 
+function isPrivateMobileCidr(value) {
+  if (typeof value !== 'string') return false;
+  const parts = value.split('/');
+  const octets = parts[0].split('.').map(Number);
+  if (octets.length !== 4 || octets.some(n => !Number.isInteger(n) || n < 0 || n > 255)) return false;
+  const prefix = parts.length === 1 ? 32 : Number(parts[1]);
+  if (parts.length > 2 || !Number.isInteger(prefix) || prefix < 0 || prefix > 32) return false;
+  const address = octets.reduce((value, octet) => ((value << 8) | octet) >>> 0, 0);
+  const mask = prefix === 0 ? 0 : (0xffffffff << (32-prefix)) >>> 0;
+  const start = address & mask;
+  const end = start + (2 ** (32-prefix)) - 1;
+  const ranges = [[0x0a000000,0x0affffff],[0xac100000,0xac1fffff],[0xc0a80000,0xc0a8ffff]];
+  return ranges.some(([low,high]) => start >= low && end <= high);
+}
+const desktopMobileSettingsSchema = z.object({
+  branch:z.string().trim().min(1).max(100),
+  latitude:z.number().min(-90).max(90),
+  longitude:z.number().min(-180).max(180),
+  radiusM:z.number().int().min(10).max(500).default(50),
+  maxAccuracyM:z.number().int().min(5).max(100).default(50),
+  allowedCidrs:z.array(z.string().max(20)).min(1).max(8)
+    .refine(values => values.every(isPrivateMobileCidr),'Usa únicamente redes privadas IPv4 del establecimiento.')
+});
+app.get('/api/desktop/mobile-settings', requireDesktopBridge, (req,res,next) => {
+  try {
+    const admin = db.prepare("SELECT id,company_id FROM users WHERE role='admin' AND active=1 ORDER BY created_at LIMIT 1").get();
+    if (!admin) throw appError(503,'ASISTIA todavía no ha terminado su configuración inicial.');
+    const branch = String(req.query.branch || 'Principal').trim();
+    const site = db.prepare('SELECT * FROM mobile_sites WHERE company_id=? AND branch=?').get(admin.company_id,branch);
+    if (!site) return res.json({configured:false,branch});
+    res.json({configured:true,settings:{
+      id:site.id,branch:site.branch,latitude:site.latitude,longitude:site.longitude,
+      radiusM:site.radius_m,maxAccuracyM:site.max_accuracy_m,
+      allowedCidrs:JSON.parse(site.allowed_cidrs_json),active:Boolean(site.active),updatedAt:site.updated_at
+    }});
+  } catch(error) { next(error); }
+});
+app.put('/api/desktop/mobile-settings', requireDesktopBridge, (req,res,next) => {
+  try {
+    const input = desktopMobileSettingsSchema.parse(req.body);
+    const admin = db.prepare("SELECT id,company_id FROM users WHERE role='admin' AND active=1 ORDER BY created_at LIMIT 1").get();
+    if (!admin) throw appError(503,'ASISTIA todavía no ha terminado su configuración inicial.');
+    const updatedAt = now();
+    const existing = db.prepare('SELECT id FROM mobile_sites WHERE company_id=? AND branch=?').get(admin.company_id,input.branch);
+    const id = existing?.id || randomUUID();
+    db.prepare(
+      'INSERT INTO mobile_sites(id,company_id,branch,latitude,longitude,radius_m,max_accuracy_m,allowed_cidrs_json,active,updated_at,updated_by) ' +
+      'VALUES(?,?,?,?,?,?,?,?,1,?,?) ON CONFLICT(company_id,branch) DO UPDATE SET ' +
+      'latitude=excluded.latitude,longitude=excluded.longitude,radius_m=excluded.radius_m,' +
+      'max_accuracy_m=excluded.max_accuracy_m,allowed_cidrs_json=excluded.allowed_cidrs_json,active=1,' +
+      'updated_at=excluded.updated_at,updated_by=excluded.updated_by'
+    ).run(id,admin.company_id,input.branch,input.latitude,input.longitude,input.radiusM,input.maxAccuracyM,
+      JSON.stringify(input.allowedCidrs),updatedAt,admin.id);
+    writeAudit(admin.company_id,admin.id,'mobile.site_configured','mobile_site',id,{
+      branch:input.branch,radiusM:input.radiusM,maxAccuracyM:input.maxAccuracyM,allowedCidrs:input.allowedCidrs
+    });
+    res.json({ok:true,configured:true,settings:{...input,id,active:true,updatedAt}});
+  } catch(error) { next(error); }
+});
+
 app.use((req,res,next) => next(appError(404,'Ruta no encontrada.')));
 app.use((err,req,res,next) => {
   if (err instanceof z.ZodError) return res.status(400).json({error:'Datos inválidos.',details:err.issues.map(i=>({field:i.path.join('.'),message:i.message}))});
