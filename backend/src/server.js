@@ -7,7 +7,9 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 import { randomUUID, createHash } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
+import https from 'node:https';
+import { registerMobileRoutes } from './mobile/mobile-routes.js';
 import { dirname, resolve } from 'node:path';
 import Database from 'better-sqlite3';
 
@@ -153,7 +155,7 @@ function assertValidEffectiveTimeline(companyId, employeeId, eventId, proposedTi
 }
 app.disable('x-powered-by');
 app.use(helmet());
-app.use(cors({
+const corsHandler = cors({
   origin(origin, cb) {
     const allowed = (process.env.CORS_ORIGIN || 'http://localhost:5173').split(',').map(s => s.trim());
     if (!origin || allowed.includes(origin)) return cb(null, true);
@@ -161,7 +163,14 @@ app.use(cors({
   },
   methods: ['GET','POST','PATCH','OPTIONS'],
   allowedHeaders: ['Content-Type','Authorization']
-}));
+});
+// Las solicitudes same-origin de la PWA no necesitan CORS; los orígenes externos siguen en lista explícita.
+app.use((req, res, next) => {
+  const origin = req.get('origin');
+  const ownOrigin = (req.secure ? 'https://' : 'http://') + req.get('host');
+  if (origin && origin === ownOrigin) return next();
+  return corsHandler(req, res, next);
+});
 app.use(express.json({ limit: '100kb', strict: true }));
 // Límites generales: reducen abuso de endpoints que no son de autenticación.
 app.use('/api', rateLimit({ windowMs: 15 * 60 * 1000, limit: 300, standardHeaders: 'draft-7', legacyHeaders: false }));
@@ -492,6 +501,8 @@ app.get('/api/audit', authenticate, roles('admin'), (req,res,next) => {
   } catch(e) { next(e); }
 });
 
+registerMobileRoutes(app, { db, authenticate, roles, writeAudit, writeEvent, now });
+
 app.use((req,res,next) => next(appError(404,'Ruta no encontrada.')));
 app.use((err,req,res,next) => {
   if (err instanceof z.ZodError) return res.status(400).json({error:'Datos inválidos.',details:err.issues.map(i=>({field:i.path.join('.'),message:i.message}))});
@@ -521,6 +532,23 @@ function bootstrap() {
 bootstrap();
 
 const server=app.listen(PORT,process.env.HOST||'127.0.0.1',()=>console.log(`ASISTIA API 0.2 escuchando en ${process.env.HOST||'127.0.0.1'}:${PORT}`));
-function shutdown() { server.close(()=>{db.close();process.exit(0);}); }
+let mobileHttpsServer = null;
+const mobileKeyPath = process.env.MOBILE_HTTPS_KEY_PATH || '';
+const mobileCertPath = process.env.MOBILE_HTTPS_CERT_PATH || '';
+if (mobileKeyPath || mobileCertPath) {
+  if (!mobileKeyPath || !mobileCertPath) throw new Error('Configura MOBILE_HTTPS_KEY_PATH y MOBILE_HTTPS_CERT_PATH juntos.');
+  const mobileHttpsPort = Number(process.env.MOBILE_HTTPS_PORT || 43178);
+  const mobileHttpsHost = process.env.MOBILE_HTTPS_HOST || '0.0.0.0';
+  if (!Number.isInteger(mobileHttpsPort) || mobileHttpsPort < 1 || mobileHttpsPort > 65535) throw new Error('MOBILE_HTTPS_PORT no es válido.');
+  mobileHttpsServer = https.createServer({ key: readFileSync(resolve(mobileKeyPath)), cert: readFileSync(resolve(mobileCertPath)) }, app);
+  mobileHttpsServer.listen(mobileHttpsPort, mobileHttpsHost, () => console.log('ASISTIA Móvil HTTPS escuchando en ' + mobileHttpsHost + ':' + mobileHttpsPort));
+}
+function shutdown() {
+  const closeDatabase = () => { try { db.close(); } finally { process.exit(0); } };
+  if (mobileHttpsServer && mobileHttpsServer.listening) {
+    mobileHttpsServer.close(() => { if (server.listening) server.close(closeDatabase); else closeDatabase(); });
+  } else if (server.listening) server.close(closeDatabase);
+  else closeDatabase();
+}
 process.on('SIGINT',shutdown);
 process.on('SIGTERM',shutdown);
