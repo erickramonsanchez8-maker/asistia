@@ -13,9 +13,19 @@ function isValidIpv4Cidr(value) {
   if (typeof value !== 'string') return false;
   const parts = value.split('/');
   if (parts.length > 2 || isIP(parts[0]) !== 4) return false;
-  if (parts.length === 1) return true;
-  const prefix = Number(parts[1]);
-  return Number.isInteger(prefix) && prefix >= 0 && prefix <= 32;
+  const prefix = parts.length === 1 ? 32 : Number(parts[1]);
+  if (!Number.isInteger(prefix) || prefix < 0 || prefix > 32) return false;
+  const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
+  const networkStart = ipv4ToInt(parts[0]) & mask;
+  const networkEnd = networkStart + (2 ** (32 - prefix)) - 1;
+  const privateRanges = [
+    [0x0a000000, 0x0affffff], // 10.0.0.0/8
+    [0xac100000, 0xac1fffff], // 172.16.0.0/12
+    [0xc0a80000, 0xc0a8ffff]  // 192.168.0.0/16
+  ];
+  // Loopback is permitted only by automated local tests, never in a production config.
+  if (process.env.NODE_ENV === 'test') privateRanges.push([0x7f000000, 0x7fffffff]);
+  return privateRanges.some(([start, end]) => networkStart >= start && networkEnd <= end);
 }
 function ipv4MatchesCidr(address, cidr) {
   if (isIP(address) !== 4 || !isValidIpv4Cidr(cidr)) return false;

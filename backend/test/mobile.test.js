@@ -153,20 +153,26 @@ test('la cuenta de trabajador solo recibe su expediente y política de ubicació
   assert.equal(status.data.nextEventType, 'clock_in');
 });
 
-test('la configuración rechaza redes que no sean IPv4 CIDR', async () => {
-  const invalid = await request('/api/mobile/settings', {
-    method: 'PUT',
-    token: adminToken,
-    body: {
-      branch: 'Otra sucursal',
-      latitude: 19.7,
-      longitude: -103.46,
-      radiusM: 50,
-      maxAccuracyM: 50,
-      allowedCidrs: ['example.com']
-    }
+test('la configuración solo acepta rangos LAN privados IPv4', async () => {
+  for (const invalidCidr of ['example.com', '8.8.8.0/24', '0.0.0.0/0']) {
+    const invalid = await request('/api/mobile/settings', {
+      method: 'PUT',
+      token: adminToken,
+      body: {
+        branch: 'Otra sucursal',
+        latitude: 19.7,
+        longitude: -103.46,
+        radiusM: 50,
+        maxAccuracyM: 50,
+        allowedCidrs: [invalidCidr]
+      }
+    });
+    assert.equal(invalid.status, 400, 'Debe rechazar ' + invalidCidr);
+  }
+  const sameOrigin = await fetch(baseUrl + '/api/mobile/me', {
+    headers: { Authorization: 'Bearer ' + workerToken, Origin: baseUrl }
   });
-  assert.equal(invalid.status, 400);
+  assert.equal(sameOrigin.status, 200, 'La PWA debe poder llamar a su API same-origin.');
 });
 
 test('GPS fuera de radio o sin precisión suficiente no genera eventos', async () => {

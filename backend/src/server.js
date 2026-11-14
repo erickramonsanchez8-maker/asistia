@@ -155,7 +155,7 @@ function assertValidEffectiveTimeline(companyId, employeeId, eventId, proposedTi
 }
 app.disable('x-powered-by');
 app.use(helmet());
-app.use(cors({
+const corsHandler = cors({
   origin(origin, cb) {
     const allowed = (process.env.CORS_ORIGIN || 'http://localhost:5173').split(',').map(s => s.trim());
     if (!origin || allowed.includes(origin)) return cb(null, true);
@@ -163,7 +163,14 @@ app.use(cors({
   },
   methods: ['GET','POST','PATCH','OPTIONS'],
   allowedHeaders: ['Content-Type','Authorization']
-}));
+});
+// Las solicitudes same-origin de la PWA no necesitan CORS; los orígenes externos siguen en lista explícita.
+app.use((req, res, next) => {
+  const origin = req.get('origin');
+  const ownOrigin = (req.secure ? 'https://' : 'http://') + req.get('host');
+  if (origin && origin === ownOrigin) return next();
+  return corsHandler(req, res, next);
+});
 app.use(express.json({ limit: '100kb', strict: true }));
 // Límites generales: reducen abuso de endpoints que no son de autenticación.
 app.use('/api', rateLimit({ windowMs: 15 * 60 * 1000, limit: 300, standardHeaders: 'draft-7', legacyHeaders: false }));
