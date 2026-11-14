@@ -39,6 +39,16 @@ jobs:
           $nodePath = (Get-Command node).Source
           Copy-Item $nodePath backend/runtime/node.exe -Force
           if (!(Test-Path backend/runtime/node.exe)) { throw "No se pudo copiar node.exe" }
+      - name: Validate local mobile certificate script syntax
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path 'backend/src/mobile/ensure-certificates.ps1'), [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
       - name: Build Windows NSIS installer
         run: npm run dist:win
       - name: Build in-app update package
