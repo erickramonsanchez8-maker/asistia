@@ -455,10 +455,11 @@ app.post('/api/desktop/sync-sessions', requireDesktopBridge, (req,res,next) => {
       return events;
     }).sort((a,b)=>Date.parse(a.occurredAt)-Date.parse(b.occurredAt));
     let imported = 0;
+    let skipped = 0;
     db.transaction(() => {
       for (const item of prepared) {
         const employee = db.prepare('SELECT id FROM employees WHERE id=? AND company_id=?').get(item.employeeId,admin.company_id);
-        if (!employee) continue;
+        if (!employee) { skipped++; continue; }
         const id = 'legacy_' + createHash('sha256').update(item.stableKey).digest('hex');
         if (db.prepare('SELECT 1 FROM attendance_events WHERE id=?').get(id)) continue;
         const sameEvent=db.prepare('SELECT 1 FROM attendance_events WHERE company_id=? AND employee_id=? AND event_type=? AND occurred_at=? LIMIT 1')
@@ -472,7 +473,7 @@ app.post('/api/desktop/sync-sessions', requireDesktopBridge, (req,res,next) => {
       }
       if (imported) writeAudit(admin.company_id,admin.id,'attendance.legacy_sessions_imported','attendance_event_batch','desktop-local-storage',{count:imported});
     })();
-    res.json({ok:true,imported,received:input.length});
+    res.json({ok:true,imported,received:input.length,skipped});
   } catch(error) { next(error); }
 });
 app.post('/api/desktop/mobile-access', requireDesktopBridge, (req,res,next) => {
