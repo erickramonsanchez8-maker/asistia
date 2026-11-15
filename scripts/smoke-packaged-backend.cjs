@@ -6,6 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const net = require('node:net');
+const https = require('node:https');
 const crypto = require('node:crypto');
 
 const backendDir = path.resolve(process.argv[2] || 'release/win-unpacked/resources/backend');
@@ -38,6 +39,36 @@ function reservePort() {
       server.close(error => error ? reject(error) : resolve(port));
     });
   });
+}
+
+function requestHttps(url, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const request = https.get(url, { headers, rejectUnauthorized: false, timeout: 5000 }, response => {
+      let body = '';
+      response.setEncoding('utf8');
+      response.on('data', chunk => { body += chunk; });
+      response.on('end', () => resolve({ statusCode: response.statusCode, body }));
+    });
+    request.on('timeout', () => request.destroy(new Error('Tiempo de espera agotado en HTTPS.')));
+    request.on('error', reject);
+  });
+}
+
+async function waitForHttps(url, child, readOutput, timeoutMs = 10000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = 'HTTPS todavía no responde.';
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null) throw new Error('El backend terminó antes de abrir HTTPS (código ' + child.exitCode + ').\n' + readOutput());
+    try {
+      const response = await requestHttps(url);
+      if (response.statusCode === 200) return response;
+      lastError = 'HTTP ' + response.statusCode + ': ' + response.body.slice(0, 500);
+    } catch (error) {
+      lastError = error.message;
+    }
+    await new Promise(resolve => setTimeout(resolve, 250));
+  }
+  throw new Error('El servidor HTTPS móvil no respondió. Último error: ' + lastError + '\n' + readOutput());
 }
 
 async function waitForHealth(baseUrl, child, readOutput, getSpawnError, timeoutMs = 20000) {
@@ -76,7 +107,12 @@ async function main() {
   });
   assert.equal(nativeCheck.status, 0, 'El runtime empaquetado no puede cargar better-sqlite3 (' + nativeAddons.join(', ') + '): ' + (nativeCheck.stderr || nativeCheck.error?.message || 'sin detalle'));
 
+  const pfxPath = process.env.ASISTIA_SMOKE_PFX_PATH;
+  const pfxPassword = process.env.ASISTIA_SMOKE_PFX_PASSWORD;
+  assertFile(pfxPath, 'Certificado PFX de prueba HTTPS');
+  assert.ok(pfxPassword, 'Falta la contraseña del PFX de prueba HTTPS.');
   const port = await reservePort();
+  const mobilePort = await reservePort();
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'asistia-packaged-smoke-'));
   const env = {
     ...process.env,
@@ -90,7 +126,11 @@ async function main() {
     BOOTSTRAP_ADMIN_NAME: 'Prueba automatizada',
     BOOTSTRAP_COMPANY_NAME: 'ASISTIA Smoke Test',
     DATABASE_PATH: path.join(tempDir, 'database', 'asistia.sqlite'),
-    BACKUP_DIR: path.join(tempDir, 'backups')
+    BACKUP_DIR: path.join(tempDir, 'backups'),
+    MOBILE_HTTPS_PFX_PATH: pfxPath,
+    MOBILE_HTTPS_PFX_PASSPHRASE: pfxPassword,
+    MOBILE_HTTPS_PORT: String(mobilePort),
+    MOBILE_HTTPS_HOST: '127.0.0.1'
   };
   fs.mkdirSync(path.dirname(env.DATABASE_PATH), { recursive: true });
 
@@ -142,8 +182,17 @@ async function main() {
     const pwa = await fetch(baseUrl + '/mobile/');
     assert.equal(pwa.status, 200, 'La PWA no se está sirviendo desde el backend empaquetado.');
 
+    const httpsPwa = await waitForHttps('https://127.0.0.1:' + mobilePort + '/mobile/', child, readOutput);
+    assert.equal(httpsPwa.statusCode, 200, 'La PWA no respondió por HTTPS móvil.');
+    const httpsHealth = await requestHttps('https://127.0.0.1:' + mobilePort + '/api/health');
+    assert.equal(httpsHealth.statusCode, 200, 'La API no respondió por HTTPS móvil.');
+    assert.equal(JSON.parse(httpsHealth.body).database, 'ok');
+    const httpsSettings = await requestHttps('https://127.0.0.1:' + mobilePort + '/api/desktop/mobile-settings?branch=Principal', headers);
+    assert.equal(httpsSettings.statusCode, 200, 'La configuración móvil no respondió por HTTPS.');
+    assert.equal(JSON.parse(httpsSettings.body).configured, true);
+
     process.stdout.write('ASISTIA PACKAGED BACKEND SMOKE TEST: OK\n');
-    process.stdout.write('Runtime: ' + version.stdout.trim() + ' | better-sqlite3: OK | API: OK | puente PC: OK | ajustes móviles: OK | PWA: OK\n');
+    process.stdout.write('Runtime: ' + version.stdout.trim() + ' | SQLite nativo: OK | API PC: OK | ajustes PC: OK | PWA HTTP: OK | HTTPS móvil: OK | ajustes por HTTPS: OK\n');
   } finally {
     if (child.exitCode === null) {
       child.kill();
