@@ -163,7 +163,7 @@ function ensureMobileCertificates(backendDir, userData, security, scriptPath) {
   }
 }
 
-async function waitForLocalApi(timeoutMs = 12000) {
+async function waitForLocalApi(timeoutMs = 30000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline && !stopping) {
     try {
@@ -178,10 +178,25 @@ async function waitForLocalApi(timeoutMs = 12000) {
   return false;
 }
 
+function writeBackendDiagnostic(message) {
+  try {
+    const logDir = path.join(app.getPath('userData'), 'logs');
+    fs.mkdirSync(logDir, { recursive: true });
+    fs.appendFileSync(path.join(logDir, 'backend-startup.log'), '[' + new Date().toISOString() + '] ' + String(message) + '\\n', 'utf8');
+  } catch {}
+}
+
 async function startLocalBackend() {
   const { backendDir, serverFile, nodeCommand, mobileCertScript } = runtimePaths();
-  if (!fs.existsSync(serverFile)) return false;
-  if (app.isPackaged && !fs.existsSync(nodeCommand)) return false;
+  writeBackendDiagnostic('Inicio de backend. packaged=' + app.isPackaged + '; backendDir=' + backendDir + '; serverFile=' + serverFile + '; node=' + nodeCommand);
+  if (!fs.existsSync(serverFile)) {
+    writeBackendDiagnostic('ERROR: no existe server.js.');
+    return false;
+  }
+  if (app.isPackaged && !fs.existsSync(nodeCommand)) {
+    writeBackendDiagnostic('ERROR: no existe el Node.js integrado.');
+    return false;
+  }
 
   const userData = app.getPath('userData');
   const security = loadOrCreateSecret();
@@ -209,15 +224,43 @@ async function startLocalBackend() {
   fs.mkdirSync(path.dirname(env.DATABASE_PATH), { recursive: true });
   fs.mkdirSync(env.BACKUP_DIR, { recursive: true });
 
-  backendProcess = spawn(nodeCommand, [serverFile], {
-    cwd: backendDir,
-    env,
-    windowsHide: true,
-    stdio: 'ignore'
-  });
-  backendProcess.on('error', () => {});
-  backendProcess.on('exit', () => { backendProcess = null; });
-  return await waitForLocalApi();
+  let logFd;
+  try {
+    const logDir = path.join(userData, 'logs');
+    fs.mkdirSync(logDir, { recursive: true });
+    logFd = fs.openSync(path.join(logDir, 'backend-startup.log'), 'a');
+  } catch (error) {
+    writeBackendDiagnostic('No se pudo abrir el registro de inicio: ' + (error.stack || error.message));
+  }
+
+  try {
+    backendProcess = spawn(nodeCommand, [serverFile], {
+      cwd: backendDir,
+      env,
+      windowsHide: true,
+      stdio: ['ignore', logFd ?? 'ignore', logFd ?? 'ignore']
+    });
+    backendProcess.on('spawn', () => writeBackendDiagnostic('Proceso Node iniciado. PID=' + backendProcess.pid));
+    backendProcess.on('error', error => {
+      writeBackendDiagnostic('ERROR al ejecutar Node: ' + (error.stack || error.message));
+      backendProcess = null;
+    });
+    backendProcess.on('exit', (code, signal) => {
+      writeBackendDiagnostic('Proceso Node terminó. code=' + code + '; signal=' + signal);
+      backendProcess = null;
+    });
+  } catch (error) {
+    writeBackendDiagnostic('ERROR al crear proceso Node: ' + (error.stack || error.message));
+    backendProcess = null;
+  } finally {
+    if (Number.isInteger(logFd)) {
+      try { fs.closeSync(logFd); } catch {}
+    }
+  }
+
+  const ready = await waitForLocalApi();
+  writeBackendDiagnostic('Resultado de arranque: ' + (ready ? 'API disponible' : 'API no respondió en 30 segundos'));
+  return ready;
 }
 
 ipcMain.handle('asistia:trial-status', () => getTrialStatus());
