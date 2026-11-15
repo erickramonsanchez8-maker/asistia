@@ -1,7 +1,8 @@
 param(
   [Parameter(Mandatory=$true)][string]$OutputDirectory,
   [Parameter(Mandatory=$true)][string]$ServerIps,
-  [switch]$FirewallOnly
+  [switch]$FirewallOnly,
+  [switch]$SkipFirewall
 )
 $ErrorActionPreference = 'Stop'
 
@@ -57,31 +58,35 @@ $pfxPassword = ConvertTo-SecureString $env:ASISTIA_CERT_PASSWORD -AsPlainText -F
 Export-PfxCertificate -Cert $server -FilePath $pfxPath -Password $pfxPassword -Force | Out-Null
 $firewallConfigured = $false
 $firewallMessage = ''
-try {
-  $rule = Get-NetFirewallRule -DisplayName 'ASISTIA Móvil HTTPS (red local)' -ErrorAction SilentlyContinue
-  if (-not $rule) {
-    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-    $principal = New-Object Security.Principal.WindowsPrincipal($identity)
-    if ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-      Set-AsistiaFirewallRule
-    } else {
-      # La regla requiere privilegios elevados. Se solicita UAC una sola vez al crearla;
-      # el proceso elevado ejecuta únicamente la configuración acotada del firewall.
-      $arguments = @(
-        '-NoProfile','-ExecutionPolicy','Bypass','-File',('"' + $PSCommandPath + '"'),
-        '-OutputDirectory',('"' + $OutputDirectory + '"'),
-        '-ServerIps',('"' + $ServerIps + '"'),
-        '-FirewallOnly'
-      )
-      $elevated = Start-Process -FilePath 'powershell.exe' -ArgumentList $arguments -Verb RunAs -Wait -PassThru -WindowStyle Hidden
-      if ($elevated.ExitCode -ne 0) { throw 'Windows no confirmó la creación de la regla de firewall.' }
+if ($SkipFirewall) {
+  $firewallMessage = 'Configuración de firewall omitida únicamente en la prueba automatizada.'
+} else {
+  try {
+    $rule = Get-NetFirewallRule -DisplayName 'ASISTIA Móvil HTTPS (red local)' -ErrorAction SilentlyContinue
+    if (-not $rule) {
+      $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+      $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+      if ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        Set-AsistiaFirewallRule
+      } else {
+        # La regla requiere privilegios elevados. Se solicita UAC una sola vez al crearla;
+        # el proceso elevado ejecuta únicamente la configuración acotada del firewall.
+        $arguments = @(
+          '-NoProfile','-ExecutionPolicy','Bypass','-File',('"' + $PSCommandPath + '"'),
+          '-OutputDirectory',('"' + $OutputDirectory + '"'),
+          '-ServerIps',('"' + $ServerIps + '"'),
+          '-FirewallOnly'
+        )
+        $elevated = Start-Process -FilePath 'powershell.exe' -ArgumentList $arguments -Verb RunAs -Wait -PassThru -WindowStyle Hidden
+        if ($elevated.ExitCode -ne 0) { throw 'Windows no confirmó la creación de la regla de firewall.' }
+      }
     }
+    $rule = Get-NetFirewallRule -DisplayName 'ASISTIA Móvil HTTPS (red local)' -ErrorAction SilentlyContinue
+    if (-not $rule -or $rule.Enabled -ne 'True') { throw 'La regla de firewall no quedó habilitada.' }
+    $firewallConfigured = $true
+  } catch {
+    $firewallMessage = 'No se pudo habilitar el acceso local. Si rechazaste el aviso de Windows, vuelve a abrir ASISTIA y autoriza la regla; la red de Windows debe estar configurada como Privada. Detalle: ' + $_.Exception.Message
   }
-  $rule = Get-NetFirewallRule -DisplayName 'ASISTIA Móvil HTTPS (red local)' -ErrorAction SilentlyContinue
-  if (-not $rule -or $rule.Enabled -ne 'True') { throw 'La regla de firewall no quedó habilitada.' }
-  $firewallConfigured = $true
-} catch {
-  $firewallMessage = 'No se pudo habilitar el acceso local. Si rechazaste el aviso de Windows, vuelve a abrir ASISTIA y autoriza la regla; la red de Windows debe estar configurada como Privada. Detalle: ' + $_.Exception.Message
 }
 $resultPath = Join-Path $OutputDirectory 'mobile-certificate-status.json'
 @{
