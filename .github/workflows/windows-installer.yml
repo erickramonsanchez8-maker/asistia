@@ -52,16 +52,19 @@ jobs:
           }
       - name: Build Windows NSIS installer
         run: npm run dist:win
-      - name: Generate local HTTPS certificate for packaged mobile smoke test
+      - name: Generate temporary HTTPS certificate for packaged mobile smoke test
         shell: pwsh
         run: |
-          $env:ASISTIA_CERT_PASSWORD = 'ASISTIA-Smoke-Only-Password-2026'
+          $env:ASISTIA_SMOKE_PFX_PASSWORD = 'ASISTIA-Smoke-Only-Password-2026'
           $certificateDirectory = Join-Path $env:RUNNER_TEMP 'asistia-mobile-smoke-certificates'
-          & ./backend/src/mobile/ensure-certificates.ps1 -OutputDirectory $certificateDirectory -ServerIps '127.0.0.1' -SkipFirewall | Out-Null
-          $status = Get-Content (Join-Path $certificateDirectory 'mobile-certificate-status.json') -Raw | ConvertFrom-Json
-          if (!(Test-Path $status.pfxPath)) { throw 'No se generó el PFX HTTPS de prueba.' }
-          "ASISTIA_SMOKE_PFX_PATH=$($status.pfxPath)" | Add-Content -Path $env:GITHUB_ENV
-          "ASISTIA_SMOKE_PFX_PASSWORD=$env:ASISTIA_CERT_PASSWORD" | Add-Content -Path $env:GITHUB_ENV
+          New-Item -ItemType Directory -Force -Path $certificateDirectory | Out-Null
+          $certificate = New-SelfSignedCertificate -DnsName @('localhost','127.0.0.1') -CertStoreLocation 'Cert:\CurrentUser\My' -KeyAlgorithm RSA -KeyLength 2048 -KeyExportPolicy Exportable -KeyUsage DigitalSignature,KeyEncipherment -NotAfter (Get-Date).AddDays(2)
+          $pfxPath = Join-Path $certificateDirectory 'asistia-mobile-smoke.pfx'
+          $pfxPassword = ConvertTo-SecureString $env:ASISTIA_SMOKE_PFX_PASSWORD -AsPlainText -Force
+          Export-PfxCertificate -Cert $certificate -FilePath $pfxPath -Password $pfxPassword -Force | Out-Null
+          if (!(Test-Path $pfxPath)) { throw 'No se generó el PFX HTTPS de prueba.' }
+          "ASISTIA_SMOKE_PFX_PATH=$pfxPath" | Add-Content -Path $env:GITHUB_ENV
+          "ASISTIA_SMOKE_PFX_PASSWORD=$env:ASISTIA_SMOKE_PFX_PASSWORD" | Add-Content -Path $env:GITHUB_ENV
       - name: Smoke test packaged Windows backend and mobile configuration bridge
         run: node scripts/smoke-packaged-backend.cjs release/win-unpacked/resources/backend
       - name: Build in-app update package
