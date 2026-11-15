@@ -11,7 +11,19 @@ const crypto = require('node:crypto');
 const backendDir = path.resolve(process.argv[2] || 'release/win-unpacked/resources/backend');
 const nodeExe = path.join(backendDir, 'runtime', 'node.exe');
 const serverFile = path.join(backendDir, 'src', 'server.js');
-const sqliteAddon = path.join(backendDir, 'node_modules', 'better-sqlite3', 'build', 'Release', 'better_sqlite3.node');
+const sqlitePackageDir = path.join(backendDir, 'node_modules', 'better-sqlite3');
+
+function listNativeAddons(dir, prefix = '') {
+  if (!fs.existsSync(dir)) return [];
+  const found = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    const relative = path.join(prefix, entry.name);
+    if (entry.isDirectory()) found.push(...listNativeAddons(full, relative));
+    else if (entry.isFile() && entry.name.toLowerCase().endsWith('.node')) found.push(relative);
+  }
+  return found;
+}
 
 function assertFile(file, label) {
   assert.ok(fs.existsSync(file), label + ' no encontrado: ' + file);
@@ -52,14 +64,17 @@ async function waitForHealth(baseUrl, child, readOutput, getSpawnError, timeoutM
 async function main() {
   assertFile(nodeExe, 'Runtime Node.js');
   assertFile(serverFile, 'Servidor local');
-  assertFile(sqliteAddon, 'Módulo nativo better-sqlite3');
+  assertFile(sqlitePackageDir, 'Paquete better-sqlite3');
+  const nativeAddons = listNativeAddons(sqlitePackageDir);
+  assert.ok(nativeAddons.length > 0, 'El paquete better-sqlite3 llegó sin su módulo nativo .node. Archivos detectados: ' +
+    (fs.existsSync(sqlitePackageDir) ? fs.readdirSync(sqlitePackageDir).join(', ') : 'directorio inexistente'));
 
   const version = spawnSync(nodeExe, ['--version'], { cwd: backendDir, encoding: 'utf8', timeout: 10000, windowsHide: true });
   assert.equal(version.status, 0, 'El node.exe empaquetado no se pudo ejecutar: ' + (version.stderr || version.error?.message || 'sin detalle'));
   const nativeCheck = spawnSync(nodeExe, ['-e', "const D=require('better-sqlite3'); const d=new D(':memory:'); d.prepare('select 1 as ok').get(); d.close(); process.stdout.write(process.version)"], {
     cwd: backendDir, encoding: 'utf8', timeout: 15000, windowsHide: true
   });
-  assert.equal(nativeCheck.status, 0, 'El runtime empaquetado no puede cargar better-sqlite3: ' + (nativeCheck.stderr || nativeCheck.error?.message || 'sin detalle'));
+  assert.equal(nativeCheck.status, 0, 'El runtime empaquetado no puede cargar better-sqlite3 (' + nativeAddons.join(', ') + '): ' + (nativeCheck.stderr || nativeCheck.error?.message || 'sin detalle'));
 
   const port = await reservePort();
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'asistia-packaged-smoke-'));
