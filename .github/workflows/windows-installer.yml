@@ -8,6 +8,7 @@ on:
       - "package.json"
       - "backend/**"
       - "desktop/**"
+      - "scripts/**"
       - ".github/workflows/windows-installer.yml"
   pull_request:
     branches: [main]
@@ -39,8 +40,33 @@ jobs:
           $nodePath = (Get-Command node).Source
           Copy-Item $nodePath backend/runtime/node.exe -Force
           if (!(Test-Path backend/runtime/node.exe)) { throw "No se pudo copiar node.exe" }
+      - name: Validate local mobile certificate script syntax
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path 'backend/src/mobile/ensure-certificates.ps1'), [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
       - name: Build Windows NSIS installer
         run: npm run dist:win
+      - name: Generate temporary HTTPS certificate for packaged mobile smoke test
+        shell: pwsh
+        run: |
+          $env:ASISTIA_SMOKE_PFX_PASSWORD = 'ASISTIA-Smoke-Only-Password-2026'
+          $certificateDirectory = Join-Path $env:RUNNER_TEMP 'asistia-mobile-smoke-certificates'
+          New-Item -ItemType Directory -Force -Path $certificateDirectory | Out-Null
+          $certificate = New-SelfSignedCertificate -DnsName @('localhost','127.0.0.1') -CertStoreLocation 'Cert:\CurrentUser\My' -KeyAlgorithm RSA -KeyLength 2048 -KeyExportPolicy Exportable -KeyUsage DigitalSignature,KeyEncipherment -NotAfter (Get-Date).AddDays(2)
+          $pfxPath = Join-Path $certificateDirectory 'asistia-mobile-smoke.pfx'
+          $pfxPassword = ConvertTo-SecureString $env:ASISTIA_SMOKE_PFX_PASSWORD -AsPlainText -Force
+          Export-PfxCertificate -Cert $certificate -FilePath $pfxPath -Password $pfxPassword -Force | Out-Null
+          if (!(Test-Path $pfxPath)) { throw 'No se generó el PFX HTTPS de prueba.' }
+          "ASISTIA_SMOKE_PFX_PATH=$pfxPath" | Add-Content -Path $env:GITHUB_ENV
+          "ASISTIA_SMOKE_PFX_PASSWORD=$env:ASISTIA_SMOKE_PFX_PASSWORD" | Add-Content -Path $env:GITHUB_ENV
+      - name: Smoke test packaged Windows backend and mobile configuration bridge
+        run: node scripts/smoke-packaged-backend.cjs release/win-unpacked/resources/backend
       - name: Build in-app update package
         shell: pwsh
         run: |
@@ -51,7 +77,7 @@ jobs:
           const pkg = {
             format: 'asistia-update-v1',
             appId: 'mx.asistia.desktop',
-            version: '0.6.2',
+            version: '0.6.4',
             releaseNotes: [
               'Prueba de demostración de 15 días con bloqueo automático al vencer.',
               'Aviso visible de los días restantes y conservación de los datos locales.',
@@ -67,19 +93,19 @@ jobs:
             })
           };
           fs.mkdirSync('release', { recursive: true });
-          fs.writeFileSync('release/ASISTIA-Update-v0.6.2.asistia-update', JSON.stringify(pkg));
+          fs.writeFileSync('release/ASISTIA-Update-v0.6.4.asistia-update', JSON.stringify(pkg));
           '@ | node
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
         with:
-          name: ASISTIA-Setup-v0.6.2-x64
+          name: ASISTIA-Setup-v0.6.4-x64
           path: release/*.exe
           if-no-files-found: error
           retention-days: 30
       - name: Upload in-app update package
         uses: actions/upload-artifact@v4
         with:
-          name: ASISTIA-Update-v0.6.2
+          name: ASISTIA-Update-v0.6.4
           path: release/*.asistia-update
           if-no-files-found: error
           retention-days: 30

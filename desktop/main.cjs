@@ -1,8 +1,9 @@
 'use strict';
 const { app, BrowserWindow, ipcMain, shell } = require('electron');
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
+const os = require('node:os');
 const crypto = require('node:crypto');
 
 const API_PORT = 43177;
@@ -13,6 +14,8 @@ const UPDATE_FILES = new Set(['ASISTIA_Control_de_Asistencia.html', 'desktop/des
 let mainWindow = null;
 let backendProcess = null;
 let stopping = false;
+let mobileConnection = null;
+let backendStartup = { ready: false, reason: 'El servicio local todavía no ha confirmado que esté disponible.' };
 
 app.setAppUserModelId('mx.asistia.desktop');
 app.setPath('userData', path.join(app.getPath('appData'), 'ASISTIA'));
@@ -26,22 +29,37 @@ function runtimePaths() {
   return {
     backendDir,
     serverFile,
-    nodeCommand: app.isPackaged ? bundledNode : (process.env.ASISTIA_NODE_PATH || 'node')
+    nodeCommand: app.isPackaged ? bundledNode : (process.env.ASISTIA_NODE_PATH || 'node'),
+    mobileCertScript: path.join(backendDir, 'src', 'mobile', 'ensure-certificates.ps1')
   };
 }
+
+let localSecurity = null;
 
 function loadOrCreateSecret() {
   const file = path.join(app.getPath('userData'), 'service-security.json');
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  try {
-    const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
-    if (typeof saved.jwtSecret === 'string' && saved.jwtSecret.length >= 64) return saved.jwtSecret;
-  } catch {}
-  const jwtSecret = crypto.randomBytes(48).toString('hex');
+  let saved = {};
+  try { saved = JSON.parse(fs.readFileSync(file, 'utf8')) || {}; } catch {}
+  const state = {
+    ...saved,
+    jwtSecret: typeof saved.jwtSecret === 'string' && saved.jwtSecret.length >= 64
+      ? saved.jwtSecret : crypto.randomBytes(48).toString('hex'),
+    desktopBridgeToken: typeof saved.desktopBridgeToken === 'string' && saved.desktopBridgeToken.length >= 64
+      ? saved.desktopBridgeToken : crypto.randomBytes(48).toString('hex'),
+    adminEmail: typeof saved.adminEmail === 'string' && saved.adminEmail.includes('@')
+      ? saved.adminEmail : 'admin-' + crypto.randomBytes(10).toString('hex') + '@local.asistia',
+    adminPassword: typeof saved.adminPassword === 'string' && saved.adminPassword.length >= 24
+      ? saved.adminPassword : crypto.randomBytes(32).toString('base64url'),
+    mobilePfxPassword: typeof saved.mobilePfxPassword === 'string' && saved.mobilePfxPassword.length >= 24
+      ? saved.mobilePfxPassword : crypto.randomBytes(32).toString('base64url'),
+    createdAt: saved.createdAt || new Date().toISOString()
+  };
   const temp = file + '.tmp';
-  fs.writeFileSync(temp, JSON.stringify({ jwtSecret, createdAt: new Date().toISOString() }), { mode: 0o600 });
+  fs.writeFileSync(temp, JSON.stringify(state, null, 2), { mode: 0o600 });
   fs.renameSync(temp, file);
-  return jwtSecret;
+  localSecurity = state;
+  return state;
 }
 
 const TRIAL_DAYS = 15;
@@ -89,11 +107,69 @@ function getTrialStatus() {
   };
 }
 
-async function waitForLocalApi(timeoutMs = 12000) {
+function getPrivateNetworkCandidates() {
+  const interfaces = os.networkInterfaces();
+  const candidates = [];
+  for (const [name, entries] of Object.entries(interfaces)) {
+    for (const item of entries || []) {
+      const family = item.family;
+      if (item.internal || (family !== 'IPv4' && family !== 4) || !isPrivateIpv4(item.address)) continue;
+      const cidr = subnetCidr(item.address,item.netmask);
+      if (!cidr || candidates.some(candidate => candidate.cidr === cidr)) continue;
+      candidates.push({name,address:item.address,netmask:item.netmask,cidr});
+    }
+  }
+  return candidates;
+}
+
+function ensureMobileCertificates(backendDir, userData, security, scriptPath) {
+  if (process.platform !== 'win32' || !fs.existsSync(scriptPath)) return null;
+  const networks = getPrivateNetworkCandidates();
+  if (!networks.length) return null;
+  const certificateDir = path.join(userData, 'certificates');
+  fs.mkdirSync(certificateDir, { recursive: true });
+  const resultPath = path.join(certificateDir, 'mobile-certificate-status.json');
+  const ips = networks.map(item => item.address).join(',');
+  const run = spawnSync('powershell.exe', [
+    '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',scriptPath,
+    '-OutputDirectory',certificateDir,'-ServerIps',ips
+  ], {
+    encoding:'utf8',
+    timeout:45000,
+    windowsHide:true,
+    env:{...process.env,ASISTIA_CERT_PASSWORD:security.mobilePfxPassword}
+  });
+  if (run.error || run.status !== 0 || !fs.existsSync(resultPath)) {
+    return {ready:false,error:run.error?.message || run.stderr || 'No se pudo preparar HTTPS local.',networks};
+  }
+  try {
+    const status = JSON.parse(fs.readFileSync(resultPath,'utf8').replace(/^\uFEFF/,''));
+    if (!status.pfxPath || !fs.existsSync(status.pfxPath) || !status.rootCertificatePath || !fs.existsSync(status.rootCertificatePath)) {
+      return {ready:false,error:'No se encontraron los archivos del certificado local.',networks};
+    }
+    const preferred = networks.find(item => /wi.?fi|wireless|wlan/i.test(item.name)) || networks[0];
+    return {
+      ready:true,
+      pfxPath:status.pfxPath,
+      rootCertificatePath:status.rootCertificatePath,
+      serverIps:status.serverIps || networks.map(item=>item.address),
+      preferredIp:preferred.address,
+      networkCandidates:networks,
+      mobileUrl:'https://' + preferred.address + ':43178/mobile/',
+      firewallConfigured:Boolean(status.firewallConfigured),
+      firewallMessage:status.firewallMessage || ''
+    };
+  } catch(error) {
+    return {ready:false,error:error.message || 'No se pudo leer el estado del certificado local.',networks};
+  }
+}
+
+async function waitForLocalApi(timeoutMs = 30000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline && !stopping) {
+    if (!backendProcess || backendProcess.exitCode !== null || backendProcess.signalCode !== null) return false;
     try {
-      const response = await fetch(API_URL + '/api/health', { signal: AbortSignal.timeout(1200) });
+      const response = await fetch(API_URL + '/api/health', { signal: AbortSignal.timeout(1200), cache: 'no-store' });
       if (response.ok) {
         const data = await response.json();
         if (data.status === 'ok' && data.database === 'ok') return true;
@@ -104,33 +180,174 @@ async function waitForLocalApi(timeoutMs = 12000) {
   return false;
 }
 
+function writeBackendDiagnostic(message) {
+  try {
+    const logDir = path.join(app.getPath('userData'), 'logs');
+    fs.mkdirSync(logDir, { recursive: true });
+    fs.appendFileSync(path.join(logDir, 'backend-startup.log'),
+      '[' + new Date().toISOString() + '] ' + String(message) + '\n', 'utf8');
+  } catch {}
+}
+
+function readBackendDiagnosticTail(maxBytes = 12000) {
+  try {
+    const file = path.join(app.getPath('userData'), 'logs', 'backend-startup.log');
+    if (!fs.existsSync(file)) return '';
+    const fd = fs.openSync(file, 'r');
+    try {
+      const size = fs.fstatSync(fd).size;
+      const length = Math.min(size, maxBytes);
+      const buffer = Buffer.alloc(length);
+      fs.readSync(fd, buffer, 0, length, size - length);
+      return buffer.toString('utf8').split(/\r?\n/).filter(Boolean).slice(-35).join('\n');
+    } finally { fs.closeSync(fd); }
+  } catch (error) {
+    return 'No se pudo leer el registro local: ' + (error.message || error);
+  }
+}
+
+function preflightBundledNode(nodeCommand, backendDir) {
+  const probeCode = [
+    "const Database = require('better-sqlite3');",
+    "const db = new Database(':memory:');",
+    "const result = db.prepare('SELECT 1 AS ready').get();",
+    "if (result.ready !== 1) process.exit(4);",
+    "db.close();",
+    "process.stdout.write(process.version + ' | better-sqlite3 OK');"
+  ].join(' ');
+  const probe = spawnSync(nodeCommand, ['-e', probeCode], {
+    cwd: backendDir,
+    encoding: 'utf8',
+    timeout: 15000,
+    windowsHide: true,
+    env: { ...process.env }
+  });
+  if (probe.error || probe.status !== 0) {
+    const detail = probe.error?.message || probe.stderr || probe.stdout || ('código de salida ' + probe.status);
+    throw new Error('El runtime Node.js incluido no pudo cargar better-sqlite3. ' + String(detail).trim());
+  }
+  writeBackendDiagnostic('Preflight de runtime correcto: ' + String(probe.stdout).trim());
+}
+
 async function startLocalBackend() {
-  const { backendDir, serverFile, nodeCommand } = runtimePaths();
-  if (!fs.existsSync(serverFile)) return false;
-  if (app.isPackaged && !fs.existsSync(nodeCommand)) return false;
+  const { backendDir, serverFile, nodeCommand, mobileCertScript } = runtimePaths();
+  backendStartup = { ready: false, reason: 'El servicio local no ha iniciado.' };
+  writeBackendDiagnostic('Inicio de backend. packaged=' + app.isPackaged + '; platform=' + process.platform +
+    '; arch=' + process.arch + '; backendDir=' + backendDir + '; serverFile=' + serverFile + '; node=' + nodeCommand);
+
+  if (!fs.existsSync(serverFile)) {
+    backendStartup.reason = 'No se encontró el servidor local incluido en ASISTIA.';
+    writeBackendDiagnostic('ERROR: ' + backendStartup.reason + ' Ruta: ' + serverFile);
+    return false;
+  }
+  if (app.isPackaged && !fs.existsSync(nodeCommand)) {
+    backendStartup.reason = 'No se encontró el runtime Node.js incluido en ASISTIA.';
+    writeBackendDiagnostic('ERROR: ' + backendStartup.reason + ' Ruta: ' + nodeCommand);
+    return false;
+  }
 
   const userData = app.getPath('userData');
+  let security;
+  try {
+    security = loadOrCreateSecret();
+    preflightBundledNode(nodeCommand, backendDir);
+  } catch (error) {
+    backendStartup.reason = error.message || 'Falló la comprobación del runtime local.';
+    writeBackendDiagnostic('ERROR de preflight: ' + (error.stack || error.message));
+    return false;
+  }
+
+  mobileConnection = ensureMobileCertificates(backendDir, userData, security, mobileCertScript);
+  if (mobileConnection?.ready) {
+    writeBackendDiagnostic('Certificado móvil preparado. IP preferida=' + mobileConnection.preferredIp +
+      '; firewall=' + mobileConnection.firewallConfigured);
+  } else {
+    writeBackendDiagnostic('HTTPS móvil no preparado: ' + (mobileConnection?.error || 'No se detectó una red privada IPv4.') +
+      '; candidates=' + JSON.stringify(mobileConnection?.networks || []));
+  }
+
   const env = {
     ...process.env,
     NODE_ENV: 'production',
     HOST: '127.0.0.1',
     PORT: String(API_PORT),
-    JWT_SECRET: loadOrCreateSecret(),
+    JWT_SECRET: security.jwtSecret,
+    DESKTOP_BRIDGE_TOKEN: security.desktopBridgeToken,
+    BOOTSTRAP_ADMIN_EMAIL: security.adminEmail,
+    BOOTSTRAP_ADMIN_PASSWORD: security.adminPassword,
+    BOOTSTRAP_ADMIN_NAME: 'Administrador ASISTIA',
+    BOOTSTRAP_COMPANY_NAME: 'ASISTIA',
     DATABASE_PATH: path.join(userData, 'database', 'asistia.sqlite'),
     BACKUP_DIR: path.join(userData, 'backups')
   };
+  if (mobileConnection?.ready) {
+    env.MOBILE_HTTPS_PFX_PATH = mobileConnection.pfxPath;
+    env.MOBILE_HTTPS_PFX_PASSPHRASE = security.mobilePfxPassword;
+    env.MOBILE_HTTPS_PORT = '43178';
+    env.MOBILE_HTTPS_HOST = '0.0.0.0';
+  }
   fs.mkdirSync(path.dirname(env.DATABASE_PATH), { recursive: true });
   fs.mkdirSync(env.BACKUP_DIR, { recursive: true });
 
-  backendProcess = spawn(nodeCommand, [serverFile], {
-    cwd: backendDir,
-    env,
-    windowsHide: true,
-    stdio: 'ignore'
-  });
-  backendProcess.on('error', () => {});
-  backendProcess.on('exit', () => { backendProcess = null; });
-  return await waitForLocalApi();
+  let logFd;
+  try {
+    const logDir = path.join(userData, 'logs');
+    fs.mkdirSync(logDir, { recursive: true });
+    logFd = fs.openSync(path.join(logDir, 'backend-startup.log'), 'a');
+  } catch (error) {
+    writeBackendDiagnostic('No se pudo abrir el registro de inicio: ' + (error.stack || error.message));
+  }
+
+  try {
+    backendProcess = spawn(nodeCommand, [serverFile], {
+      cwd: backendDir,
+      env,
+      windowsHide: true,
+      stdio: ['ignore', logFd ?? 'ignore', logFd ?? 'ignore']
+    });
+    backendProcess.on('spawn', () => writeBackendDiagnostic('Proceso Node iniciado. PID=' + backendProcess?.pid));
+    backendProcess.on('error', error => {
+      backendStartup = { ready: false, reason: 'Windows no pudo ejecutar el servidor local: ' + (error.message || error) };
+      writeBackendDiagnostic('ERROR al ejecutar Node: ' + (error.stack || error.message));
+      backendProcess = null;
+    });
+    backendProcess.on('exit', (code, signal) => {
+      writeBackendDiagnostic('Proceso Node terminó. code=' + code + '; signal=' + signal);
+      if (!backendStartup.ready) {
+        backendStartup = { ready: false, reason: 'El servidor local se cerró durante el arranque. Código: ' + code + '; señal: ' + (signal || 'ninguna') };
+      } else if (!stopping) {
+        backendStartup = { ready: false, reason: 'El servidor local se detuvo inesperadamente. Código: ' + code + '; señal: ' + (signal || 'ninguna') };
+      }
+      backendProcess = null;
+    });
+  } catch (error) {
+    backendStartup = { ready: false, reason: 'No se pudo crear el proceso del servidor local: ' + (error.message || error) };
+    writeBackendDiagnostic('ERROR al crear proceso Node: ' + (error.stack || error.message));
+    backendProcess = null;
+  } finally {
+    if (Number.isInteger(logFd)) {
+      try { fs.closeSync(logFd); } catch {}
+    }
+  }
+
+  if (!backendProcess) return false;
+  const ready = await waitForLocalApi();
+  if (ready) {
+    backendStartup = { ready: true, reason: '' };
+    writeBackendDiagnostic('Resultado de arranque: API disponible y base de datos operativa.');
+    return true;
+  }
+
+  const tail = readBackendDiagnosticTail();
+  backendStartup = {
+    ready: false,
+    reason: backendProcess
+      ? 'El servidor se inició, pero no respondió en el puerto local ' + API_PORT + '.'
+      : 'El servidor local terminó antes de quedar disponible.'
+  };
+  writeBackendDiagnostic('Resultado de arranque: API no disponible. ' + backendStartup.reason);
+  if (tail) writeBackendDiagnostic('Últimas líneas de diagnóstico:\n' + tail);
+  return false;
 }
 
 ipcMain.handle('asistia:trial-status', () => getTrialStatus());
@@ -143,12 +360,110 @@ ipcMain.handle('asistia:open-activation-whatsapp', async () => {
 
 ipcMain.handle('asistia:health', async () => {
   try {
-    const response = await fetch(API_URL + '/api/health', { signal: AbortSignal.timeout(1800) });
-    if (!response.ok) throw new Error('Servicio local no disponible');
+    const response = await fetch(API_URL + '/api/health', { signal: AbortSignal.timeout(1800), cache: 'no-store' });
+    if (!response.ok) throw new Error('HTTP ' + response.status);
     return await response.json();
-  } catch {
-    return { status: 'offline', database: 'unknown', service: 'ASISTIA local', version: activeUpdateVersion(path.join(app.getPath('userData'), 'updates')) };
+  } catch (error) {
+    const reason = backendStartup.reason || ('No se pudo conectar con el servidor local: ' + (error.message || error));
+    return {
+      status: 'offline',
+      database: 'unknown',
+      service: 'ASISTIA local',
+      version: activeUpdateVersion(path.join(app.getPath('userData'), 'updates')),
+      reason,
+      logPath: path.join(app.getPath('userData'), 'logs', 'backend-startup.log')
+    };
   }
+});
+
+async function desktopBridgeRequest(route, options = {}) {
+  if (!localSecurity) loadOrCreateSecret();
+  let response;
+  try {
+    response = await fetch(API_URL + route, {
+      method: options.method || 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-ASISTIA-Desktop-Bridge': localSecurity.desktopBridgeToken
+      },
+      body: options.body ? JSON.stringify(options.body) : undefined,
+      signal: AbortSignal.timeout(8000),
+      cache: 'no-store'
+    });
+  } catch (error) {
+    const detail = backendStartup.reason || (error.message || 'No hubo respuesta del servidor local.');
+    writeBackendDiagnostic('Fallo de comunicación con ' + route + ': ' + (error.stack || error.message));
+    throw new Error('ASISTIA no puede comunicarse con su servicio local. ' + detail +
+      ' Diagnóstico guardado en: ' + path.join(app.getPath('userData'), 'logs', 'backend-startup.log'));
+  }
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || 'No se pudo completar la operación local. HTTP ' + response.status);
+  return data;
+}
+
+ipcMain.handle('asistia:provision-mobile-access', async (_event, employee) => {
+  if (!employee || typeof employee !== 'object') throw new Error('Ficha de empleado inválida.');
+  return desktopBridgeRequest('/api/desktop/mobile-access', { method: 'POST', body: employee });
+});
+ipcMain.handle('asistia:mobile-recent', async () => {
+  return desktopBridgeRequest('/api/desktop/mobile-recent?limit=20');
+});
+ipcMain.handle('asistia:sync-employees', async (_event, employees) => {
+  if (!Array.isArray(employees)) throw new Error('La lista de empleados no es válida.');
+  return desktopBridgeRequest('/api/desktop/sync-employees', { method: 'POST', body: employees });
+});
+ipcMain.handle('asistia:record-attendance-event', async (_event, attendance) => {
+  if (!attendance || typeof attendance !== 'object') throw new Error('Registro de asistencia inválido.');
+  return desktopBridgeRequest('/api/desktop/record-attendance', { method: 'POST', body: attendance });
+});
+ipcMain.handle('asistia:sync-sessions', async (_event, sessions) => {
+  if (!Array.isArray(sessions)) throw new Error('La lista de jornadas no es válida.');
+  return desktopBridgeRequest('/api/desktop/sync-sessions', { method: 'POST', body: sessions });
+});
+ipcMain.handle('asistia:mobile-events', async () => {
+  return desktopBridgeRequest('/api/desktop/mobile-events?limit=10000');
+});
+ipcMain.handle('asistia:get-mobile-settings', async (_event, branch) => {
+  return desktopBridgeRequest('/api/desktop/mobile-settings?branch=' + encodeURIComponent(String(branch || 'Principal')));
+});
+ipcMain.handle('asistia:save-mobile-settings', async (_event, settings) => {
+  if (!settings || typeof settings !== 'object') throw new Error('La configuración móvil no es válida.');
+  return desktopBridgeRequest('/api/desktop/mobile-settings', { method: 'PUT', body: settings });
+});
+function isPrivateIpv4(address) {
+  const parts = String(address).split('.').map(Number);
+  if (parts.length !== 4 || parts.some(n => !Number.isInteger(n) || n < 0 || n > 255)) return false;
+  return parts[0] === 10 || (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
+    (parts[0] === 192 && parts[1] === 168);
+}
+function subnetCidr(address, mask) {
+  const ip = String(address).split('.').map(Number);
+  const nm = String(mask).split('.').map(Number);
+  if (ip.length !== 4 || nm.length !== 4 || ip.some(n => !Number.isInteger(n) || n<0 || n>255) || nm.some(n => !Number.isInteger(n) || n<0 || n>255)) return null;
+  const maskBits = nm.map(n => n.toString(2).padStart(8,'0')).join('');
+  if (!/^1*0*$/.test(maskBits)) return null;
+  const prefix = (maskBits.match(/1/g) || []).length;
+  const network = ip.map((n,i) => n & nm[i]).join('.');
+  return network + '/' + prefix;
+}
+ipcMain.handle('asistia:get-mobile-network-info', () => ({candidates:getPrivateNetworkCandidates()}));
+ipcMain.handle('asistia:get-mobile-connection-info', () => {
+  const info = mobileConnection || {ready:false,error:'No se pudo preparar el certificado HTTPS local.',networks:getPrivateNetworkCandidates()};
+  return {
+    ready:Boolean(info.ready),
+    mobileUrl:info.mobileUrl || '',
+    preferredIp:info.preferredIp || '',
+    networkCandidates:info.networkCandidates || info.networks || [],
+    rootCertificatePath:info.rootCertificatePath || '',
+    firewallConfigured:Boolean(info.firewallConfigured),
+    firewallMessage:info.firewallMessage || '',
+    error:info.error || ''
+  };
+});
+ipcMain.handle('asistia:open-mobile-certificate-folder', async () => {
+  const folder = path.join(app.getPath('userData'),'certificates');
+  await shell.openPath(folder);
+  return folder;
 });
 
 ipcMain.handle('asistia:open-data-folder', async () => {
@@ -309,7 +624,8 @@ if (!hasLock) {
   });
   app.whenReady().then(async () => {
     getTrialStatus();
-    await startLocalBackend();
+    const backendReady = await startLocalBackend();
+    if (!backendReady) writeBackendDiagnostic('ASISTIA PC abrirá en modo limitado; las funciones que requieren el servicio local mostrarán el motivo del fallo.');
     createWindow();
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();

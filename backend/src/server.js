@@ -6,8 +6,10 @@ import rateLimit from 'express-rate-limit';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
-import { randomUUID, createHash } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
+import { randomUUID, randomBytes, createHash, timingSafeEqual } from 'node:crypto';
+import { mkdirSync, readFileSync } from 'node:fs';
+import https from 'node:https';
+import { registerMobileRoutes } from './mobile/mobile-routes.js';
 import { dirname, resolve } from 'node:path';
 import Database from 'better-sqlite3';
 
@@ -103,10 +105,10 @@ function writeAudit(companyId, actorId, action, entityType, entityId, details = 
   const hash = createHash('sha256').update(payload).digest('hex');
   audit.run(id, companyId, actorId, action, entityType, entityId, JSON.stringify(details), created, prev, hash);
 }
-function writeEvent({companyId, employeeId, eventType, occurredAt, source, createdBy}) {
+function writeEvent({companyId, employeeId, eventType, occurredAt, source, createdBy, id: suppliedId}) {
   const prev = db.prepare('SELECT event_hash FROM attendance_events WHERE company_id=? ORDER BY rowid DESC LIMIT 1').get(companyId)?.event_hash || null;
   const receivedAt = now();
-  const id = randomUUID();
+  const id = suppliedId || randomUUID();
   const payload = JSON.stringify({id,companyId,employeeId,eventType,occurredAt,receivedAt,source,createdBy,prev});
   const hash = createHash('sha256').update(payload).digest('hex');
   db.prepare(`INSERT INTO attendance_events
@@ -153,7 +155,7 @@ function assertValidEffectiveTimeline(companyId, employeeId, eventId, proposedTi
 }
 app.disable('x-powered-by');
 app.use(helmet());
-app.use(cors({
+const corsHandler = cors({
   origin(origin, cb) {
     const allowed = (process.env.CORS_ORIGIN || 'http://localhost:5173').split(',').map(s => s.trim());
     if (!origin || allowed.includes(origin)) return cb(null, true);
@@ -161,7 +163,14 @@ app.use(cors({
   },
   methods: ['GET','POST','PATCH','OPTIONS'],
   allowedHeaders: ['Content-Type','Authorization']
-}));
+});
+// Las solicitudes same-origin de la PWA no necesitan CORS; los orígenes externos siguen en lista explícita.
+app.use((req, res, next) => {
+  const origin = req.get('origin');
+  const ownOrigin = (req.secure ? 'https://' : 'http://') + req.get('host');
+  if (origin && origin === ownOrigin) return next();
+  return corsHandler(req, res, next);
+});
 app.use(express.json({ limit: '100kb', strict: true }));
 // Límites generales: reducen abuso de endpoints que no son de autenticación.
 app.use('/api', rateLimit({ windowMs: 15 * 60 * 1000, limit: 300, standardHeaders: 'draft-7', legacyHeaders: false }));
@@ -170,11 +179,17 @@ const proxyHops = Number(process.env.TRUST_PROXY_HOPS || 0);
 if (Number.isInteger(proxyHops) && proxyHops > 0) app.set('trust proxy', proxyHops);
 app.use('/api/auth', rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: 'draft-7', legacyHeaders: false }));
 
-const loginSchema = z.object({ email: z.string().email().max(254), password: z.string().min(1).max(200) });
+const loginSchema = z.object({
+  email: z.string().email().max(254).optional(),
+  employeeNumber: z.string().trim().min(1).max(40).optional(),
+  password: z.string().min(1).max(200)
+}).refine(input => Boolean(input.email || input.employeeNumber), 'Ingresa tu correo o número de empleado.');
 app.post('/api/auth/login', (req,res,next) => {
   try {
     const input = loginSchema.parse(req.body);
-    const candidates = db.prepare('SELECT * FROM users WHERE email=? AND active=1').all(input.email.toLowerCase());
+    const candidates = input.email
+      ? db.prepare('SELECT * FROM users WHERE email=? AND active=1').all(input.email.toLowerCase())
+      : db.prepare(`SELECT u.* FROM users u JOIN employees e ON e.id=u.employee_id AND e.company_id=u.company_id WHERE e.employee_number=? AND u.role='worker' AND u.active=1`).all(input.employeeNumber);
     const matches = candidates.filter(candidate => bcrypt.compareSync(input.password, candidate.password_hash));
     // Evita autenticar de forma ambigua si una misma dirección existe en varias empresas.
     if (matches.length !== 1) throw appError(401, 'Credenciales incorrectas o cuenta ambigua. Usa un correo único por usuario.'); 
@@ -328,6 +343,226 @@ app.post('/api/employees', authenticate, roles('admin','supervisor'), (req,res,n
     writeAudit(req.user.companyId,req.user.id,'employee.created','employee',id,{employeeNumber:input.employeeNumber});
     res.status(201).json({employee:{id,...input,createdAt:created,active:1}});
   } catch(e) { next(e); }
+});
+function requireDesktopBridge(req,res,next) {
+  const remote = String(req.socket?.remoteAddress || '');
+  const isLoopback = ['127.0.0.1','::1','::ffff:127.0.0.1'].includes(remote);
+  const expected = Buffer.from(process.env.DESKTOP_BRIDGE_TOKEN || '', 'utf8');
+  const supplied = Buffer.from(String(req.get('x-asistia-desktop-bridge') || ''), 'utf8');
+  if (!isLoopback || expected.length < 32 || expected.length !== supplied.length || !timingSafeEqual(expected, supplied)) {
+    return next(appError(403, 'Acceso interno de ASISTIA no autorizado.'));
+  }
+  next();
+}
+app.post('/api/desktop/sync-employees', requireDesktopBridge, (req,res,next) => {
+  try {
+    const input = z.array(desktopMobileEmployeeSchema).max(1000).parse(req.body);
+    const admin = db.prepare("SELECT id,company_id FROM users WHERE role='admin' AND active=1 ORDER BY created_at LIMIT 1").get();
+    if (!admin) throw appError(503, 'ASISTIA todavía no ha terminado su configuración inicial.');
+    const syncOne = db.prepare(`INSERT INTO employees(id,company_id,employee_number,full_name,branch,active,created_at)
+      VALUES(?,?,?,?,?,?,?)
+      ON CONFLICT(id) DO UPDATE SET employee_number=excluded.employee_number,
+        full_name=excluded.full_name,branch=excluded.branch,active=excluded.active`);
+    const findNumber = db.prepare('SELECT id FROM employees WHERE company_id=? AND employee_number=?');
+    const findId = db.prepare('SELECT company_id FROM employees WHERE id=?');
+    const updateWorkers = db.prepare("UPDATE users SET name=?,active=?,token_version=token_version+CASE WHEN active<>? THEN 1 ELSE 0 END WHERE company_id=? AND employee_id=? AND role='worker'");
+    const normalized = input.map(employee => ({
+      ...employee,
+      employeeNumber: employee.employeeNumber || ('AS-' + createHash('sha256').update(employee.id).digest('hex').slice(0,10).toUpperCase())
+    }));
+    db.transaction(() => {
+      for (const employee of normalized) {
+        const owner = findNumber.get(admin.company_id,employee.employeeNumber);
+        if (owner && owner.id !== employee.id) throw appError(409, 'El número de empleado ' + employee.employeeNumber + ' está duplicado en ASISTIA.');
+        const idOwner = findId.get(employee.id);
+        if (idOwner && idOwner.company_id !== admin.company_id) throw appError(409, 'Un identificador de empleado pertenece a otra empresa.');
+        syncOne.run(employee.id,admin.company_id,employee.employeeNumber,employee.fullName,employee.branch,employee.active ? 1 : 0,now());
+        updateWorkers.run(employee.fullName,employee.active ? 1 : 0,employee.active ? 1 : 0,admin.company_id,employee.id);
+      }
+      if (normalized.length) writeAudit(admin.company_id,admin.id,'employees.desktop_sync','employee_batch','desktop-local-storage',{
+        count:normalized.length,active:normalized.filter(x=>x.active).length
+      });
+    })();
+    res.json({ok:true,synced:normalized.length});
+  } catch(error) { next(error); }
+});
+const desktopMobileEmployeeSchema = z.object({
+  id: z.string().trim().min(3).max(120).regex(/^[A-Za-z0-9_-]+$/),
+  fullName: z.string().trim().min(2).max(160),
+  employeeNumber: z.string().trim().max(40).optional().default(''),
+  branch: z.string().trim().min(1).max(100).optional().default('Principal'),
+  active: z.boolean().optional().default(true)
+});
+const desktopAttendanceEventSchema = desktopMobileEmployeeSchema.extend({
+  eventType: z.enum(['clock_in','clock_out']),
+  occurredAt: z.string().datetime({offset:true}).optional()
+});
+const desktopLegacySessionSchema = z.object({
+  id: z.string().trim().min(1).max(120),
+  employeeId: z.string().trim().min(3).max(120),
+  clockIn: z.string().datetime({offset:true}),
+  clockOut: z.string().datetime({offset:true}).nullable().optional()
+});
+
+// El puente de escritorio mantiene la identidad del empleado y registra en el
+// mismo historial que consulta ASISTIA Móvil. No expone estas rutas a la LAN.
+app.post('/api/desktop/record-attendance', requireDesktopBridge, (req,res,next) => {
+  try {
+    const input = desktopAttendanceEventSchema.parse(req.body);
+    if (!input.active) throw appError(403,'El empleado está inactivo.');
+    const admin = db.prepare("SELECT id,company_id FROM users WHERE role='admin' AND active=1 ORDER BY created_at LIMIT 1").get();
+    if (!admin) throw appError(503,'ASISTIA todavía no ha terminado su configuración inicial.');
+    const employeeNumber = input.employeeNumber || ('AS-' + createHash('sha256').update(input.id).digest('hex').slice(0,10).toUpperCase());
+    const numberOwner = db.prepare('SELECT id FROM employees WHERE company_id=? AND employee_number=?').get(admin.company_id,employeeNumber);
+    if (numberOwner && numberOwner.id !== input.id) throw appError(409,'El número de empleado ya está vinculado a otra ficha.');
+    const idOwner = db.prepare('SELECT company_id FROM employees WHERE id=?').get(input.id);
+    if (idOwner && idOwner.company_id !== admin.company_id) throw appError(409,'El identificador de empleado pertenece a otra empresa.');
+    const occurredAt = input.occurredAt || now();
+    const eventTime = Date.parse(occurredAt);
+    if (!Number.isFinite(eventTime) || eventTime > Date.now() + 5 * 60 * 1000) throw appError(400,'La hora del registro no es válida.');
+    const last = db.prepare('SELECT event_type,occurred_at FROM attendance_events WHERE company_id=? AND employee_id=? ORDER BY occurred_at DESC,rowid DESC LIMIT 1')
+      .get(admin.company_id,input.id);
+    if (last?.event_type === input.eventType) throw appError(409,input.eventType === 'clock_in' ? 'Ya existe una entrada sin salida.' : 'No existe una entrada pendiente de salida.');
+    if (last && eventTime < Date.parse(last.occurred_at)) throw appError(409,'La hora no puede ser anterior al último registro del empleado.');
+    const event = db.transaction(() => {
+      const created = now();
+      db.prepare(`INSERT INTO employees(id,company_id,employee_number,full_name,branch,active,created_at)
+        VALUES(?,?,?,?,?,?,?)
+        ON CONFLICT(id) DO UPDATE SET employee_number=excluded.employee_number,
+          full_name=excluded.full_name,branch=excluded.branch,active=excluded.active`)
+        .run(input.id,admin.company_id,employeeNumber,input.fullName,input.branch,input.active ? 1 : 0,created);
+      const saved = writeEvent({companyId:admin.company_id,employeeId:input.id,eventType:input.eventType,occurredAt,source:'kiosk',createdBy:admin.id});
+      writeAudit(admin.company_id,admin.id,'attendance.desktop_event_created','attendance_event',saved.id,{
+        employeeNumber,eventType:input.eventType,occurredAt:saved.occurred_at
+      });
+      return saved;
+    })();
+    res.status(201).json({ok:true,event});
+  } catch(error) { next(error); }
+});
+
+// Importación inicial de jornadas existentes: IDs deterministas evitan duplicados
+// cada vez que ASISTIA vuelve a abrirse o sincroniza el almacenamiento legado.
+app.post('/api/desktop/sync-sessions', requireDesktopBridge, (req,res,next) => {
+  try {
+    const input = z.array(desktopLegacySessionSchema).max(500).parse(req.body);
+    const admin = db.prepare("SELECT id,company_id FROM users WHERE role='admin' AND active=1 ORDER BY created_at LIMIT 1").get();
+    if (!admin) throw appError(503,'ASISTIA todavía no ha terminado su configuración inicial.');
+    const prepared = input.flatMap(session => {
+      const base = admin.company_id + ':' + session.id;
+      const events = [{employeeId:session.employeeId,eventType:'clock_in',occurredAt:session.clockIn,stableKey:base + ':in'}];
+      if (session.clockOut) events.push({employeeId:session.employeeId,eventType:'clock_out',occurredAt:session.clockOut,stableKey:base + ':out'});
+      return events;
+    }).sort((a,b)=>Date.parse(a.occurredAt)-Date.parse(b.occurredAt));
+    let imported = 0;
+    let skipped = 0;
+    db.transaction(() => {
+      for (const item of prepared) {
+        const employee = db.prepare('SELECT id FROM employees WHERE id=? AND company_id=?').get(item.employeeId,admin.company_id);
+        if (!employee) { skipped++; continue; }
+        const id = 'legacy_' + createHash('sha256').update(item.stableKey).digest('hex');
+        if (db.prepare('SELECT 1 FROM attendance_events WHERE id=?').get(id)) continue;
+        const sameEvent=db.prepare('SELECT 1 FROM attendance_events WHERE company_id=? AND employee_id=? AND event_type=? AND occurred_at=? LIMIT 1')
+          .get(admin.company_id,item.employeeId,item.eventType,item.occurredAt);
+        if (sameEvent) continue;
+        writeEvent({
+          id,companyId:admin.company_id,employeeId:item.employeeId,eventType:item.eventType,
+          occurredAt:item.occurredAt,source:'legacy_migration',createdBy:admin.id
+        });
+        imported++;
+      }
+      if (imported) writeAudit(admin.company_id,admin.id,'attendance.legacy_sessions_imported','attendance_event_batch','desktop-local-storage',{count:imported});
+    })();
+    res.json({ok:true,imported,received:input.length,skipped});
+  } catch(error) { next(error); }
+});
+app.post('/api/desktop/mobile-access', requireDesktopBridge, (req,res,next) => {
+  try {
+    const input = desktopMobileEmployeeSchema.parse(req.body);
+    const admin = db.prepare("SELECT id,company_id FROM users WHERE role='admin' AND active=1 ORDER BY created_at LIMIT 1").get();
+    if (!admin) throw appError(503, 'ASISTIA todavía no ha terminado su configuración inicial.');
+    const employeeNumber = input.employeeNumber || ('AS-' + createHash('sha256').update(input.id).digest('hex').slice(0,10).toUpperCase());
+    const numberOwner = db.prepare('SELECT id FROM employees WHERE company_id=? AND employee_number=?').get(admin.company_id, employeeNumber);
+    if (numberOwner && numberOwner.id !== input.id) throw appError(409, 'El número de empleado ya está vinculado a otra ficha.');
+    const idOwner = db.prepare('SELECT company_id FROM employees WHERE id=?').get(input.id);
+    if (idOwner && idOwner.company_id !== admin.company_id) throw appError(409, 'El identificador de empleado ya pertenece a otra empresa.');
+
+    const employee = {
+      id: input.id,
+      companyId: admin.company_id,
+      employeeNumber,
+      fullName: input.fullName,
+      branch: input.branch,
+      active: input.active
+    };
+    const existingUser = db.prepare("SELECT id FROM users WHERE company_id=? AND employee_id=? AND role='worker' LIMIT 1")
+      .get(admin.company_id, input.id);
+    const userEmail = 'mobile+' + createHash('sha256').update(admin.company_id + ':' + input.id).digest('hex').slice(0,24) + '@asistia.local';
+    const emailOwner = db.prepare('SELECT id FROM users WHERE email=? COLLATE NOCASE LIMIT 1').get(userEmail);
+    if (emailOwner && emailOwner.id !== existingUser?.id) throw appError(409, 'No se pudo reservar el identificador interno de acceso móvil.');
+    const temporaryPassword = randomBytes(24).toString('base64url');
+    const created = now();
+    const workerId = existingUser?.id || randomUUID();
+
+    db.transaction(() => {
+      db.prepare(`INSERT INTO employees(id,company_id,employee_number,full_name,branch,active,created_at)
+        VALUES(?,?,?,?,?,?,?)
+        ON CONFLICT(id) DO UPDATE SET employee_number=excluded.employee_number,
+          full_name=excluded.full_name,branch=excluded.branch,active=excluded.active`)
+        .run(employee.id, employee.companyId, employee.employeeNumber, employee.fullName, employee.branch, employee.active ? 1 : 0, created);
+      if (existingUser) {
+        db.prepare("UPDATE users SET name=?,email=?,password_hash=?,active=?,token_version=token_version+1 WHERE id=? AND company_id=?")
+          .run(employee.fullName,userEmail,bcrypt.hashSync(temporaryPassword,12),employee.active ? 1 : 0,workerId,admin.company_id);
+      } else {
+        db.prepare("INSERT INTO users(id,company_id,name,email,password_hash,role,employee_id,active,created_at) VALUES(?,?,?,?,?,'worker',?,?,?)")
+          .run(workerId,admin.company_id,employee.fullName,userEmail,bcrypt.hashSync(temporaryPassword,12),employee.id,employee.active ? 1 : 0,created);
+      }
+      writeAudit(admin.company_id,admin.id,'employee.mobile_access_generated','employee',employee.id,{
+        employeeNumber:employee.employeeNumber,reset:Boolean(existingUser),active:employee.active
+      });
+    })();
+
+    res.status(existingUser ? 200 : 201).json({
+      ok:true,
+      employee:{id:employee.id,employeeNumber:employee.employeeNumber,fullName:employee.fullName,branch:employee.branch},
+      access:{login:employee.employeeNumber,password:temporaryPassword,temporary:true},
+      reset:Boolean(existingUser)
+    });
+  } catch(error) { next(error); }
+});
+app.get('/api/desktop/mobile-recent', requireDesktopBridge, (req,res,next) => {
+  try {
+    const admin = db.prepare("SELECT company_id FROM users WHERE role='admin' AND active=1 ORDER BY created_at LIMIT 1").get();
+    if (!admin) throw appError(503, 'ASISTIA todavía no ha terminado su configuración inicial.');
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
+    const rows = db.prepare(
+      'SELECT e.id,e.employee_id AS employeeId,p.employee_number AS employeeNumber,p.full_name AS fullName,' +
+      'p.branch,e.event_type AS eventType,e.occurred_at AS occurredAt,e.source,' +
+      'm.accuracy_m AS accuracyM,m.distance_m AS distanceM,m.accepted_at AS validatedAt ' +
+      'FROM attendance_events e JOIN employees p ON p.id=e.employee_id ' +
+      'JOIN mobile_attendance_evidence m ON m.attendance_event_id=e.id ' +
+      'WHERE e.company_id=? ORDER BY e.occurred_at DESC LIMIT ?'
+    ).all(admin.company_id,limit);
+    res.json({records:rows});
+  } catch(error) { next(error); }
+});
+app.get('/api/desktop/mobile-events', requireDesktopBridge, (req,res,next) => {
+  try {
+    const admin = db.prepare("SELECT company_id FROM users WHERE role='admin' AND active=1 ORDER BY created_at LIMIT 1").get();
+    if (!admin) throw appError(503,'ASISTIA todavía no ha terminado su configuración inicial.');
+    const limit = Math.min(10000,Math.max(1,Number(req.query.limit)||10000));
+    // Incluye todos los orígenes para unir entradas y salidas mixtas (quiosco/móvil).
+    // Los eventos históricos se usan como contexto; no generan jornadas duplicadas.
+    const events = db.prepare(
+      'SELECT e.id,e.employee_id AS employeeId,p.employee_number AS employeeNumber,p.full_name AS fullName,' +
+      'p.branch,e.event_type AS eventType,e.occurred_at AS occurredAt,e.received_at AS receivedAt,e.source,' +
+      'm.accuracy_m AS accuracyM,m.distance_m AS distanceM,m.accepted_at AS validatedAt ' +
+      'FROM attendance_events e JOIN employees p ON p.id=e.employee_id ' +
+      'LEFT JOIN mobile_attendance_evidence m ON m.attendance_event_id=e.id ' +
+      'WHERE e.company_id=? ORDER BY e.occurred_at DESC,e.rowid DESC LIMIT ?'
+    ).all(admin.company_id,limit);
+    res.json({events});
+  } catch(error) { next(error); }
 });
 app.patch('/api/employees/:id/deactivate', authenticate, roles('admin'), (req,res,next) => {
   try {
@@ -492,6 +727,68 @@ app.get('/api/audit', authenticate, roles('admin'), (req,res,next) => {
   } catch(e) { next(e); }
 });
 
+registerMobileRoutes(app, { db, authenticate, roles, writeAudit, writeEvent, now });
+
+function isPrivateMobileCidr(value) {
+  if (typeof value !== 'string') return false;
+  const parts = value.split('/');
+  const octets = parts[0].split('.').map(Number);
+  if (octets.length !== 4 || octets.some(n => !Number.isInteger(n) || n < 0 || n > 255)) return false;
+  const prefix = parts.length === 1 ? 32 : Number(parts[1]);
+  if (parts.length > 2 || !Number.isInteger(prefix) || prefix < 0 || prefix > 32) return false;
+  const address = octets.reduce((value, octet) => ((value << 8) | octet) >>> 0, 0);
+  const mask = prefix === 0 ? 0 : (0xffffffff << (32-prefix)) >>> 0;
+  const start = (address & mask) >>> 0;
+  const end = start + (2 ** (32-prefix)) - 1;
+  const ranges = [[0x0a000000,0x0affffff],[0xac100000,0xac1fffff],[0xc0a80000,0xc0a8ffff]];
+  return ranges.some(([low,high]) => start >= low && end <= high);
+}
+const desktopMobileSettingsSchema = z.object({
+  branch:z.string().trim().min(1).max(100),
+  latitude:z.number().min(-90).max(90),
+  longitude:z.number().min(-180).max(180),
+  radiusM:z.number().int().min(10).max(500).default(50),
+  maxAccuracyM:z.number().int().min(5).max(100).default(50),
+  allowedCidrs:z.array(z.string().max(20)).min(1).max(8)
+    .refine(values => values.every(isPrivateMobileCidr),'Usa únicamente redes privadas IPv4 del establecimiento.')
+});
+app.get('/api/desktop/mobile-settings', requireDesktopBridge, (req,res,next) => {
+  try {
+    const admin = db.prepare("SELECT id,company_id FROM users WHERE role='admin' AND active=1 ORDER BY created_at LIMIT 1").get();
+    if (!admin) throw appError(503,'ASISTIA todavía no ha terminado su configuración inicial.');
+    const branch = String(req.query.branch || 'Principal').trim();
+    const site = db.prepare('SELECT * FROM mobile_sites WHERE company_id=? AND branch=?').get(admin.company_id,branch);
+    if (!site) return res.json({configured:false,branch});
+    res.json({configured:true,settings:{
+      id:site.id,branch:site.branch,latitude:site.latitude,longitude:site.longitude,
+      radiusM:site.radius_m,maxAccuracyM:site.max_accuracy_m,
+      allowedCidrs:JSON.parse(site.allowed_cidrs_json),active:Boolean(site.active),updatedAt:site.updated_at
+    }});
+  } catch(error) { next(error); }
+});
+app.put('/api/desktop/mobile-settings', requireDesktopBridge, (req,res,next) => {
+  try {
+    const input = desktopMobileSettingsSchema.parse(req.body);
+    const admin = db.prepare("SELECT id,company_id FROM users WHERE role='admin' AND active=1 ORDER BY created_at LIMIT 1").get();
+    if (!admin) throw appError(503,'ASISTIA todavía no ha terminado su configuración inicial.');
+    const updatedAt = now();
+    const existing = db.prepare('SELECT id FROM mobile_sites WHERE company_id=? AND branch=?').get(admin.company_id,input.branch);
+    const id = existing?.id || randomUUID();
+    db.prepare(
+      'INSERT INTO mobile_sites(id,company_id,branch,latitude,longitude,radius_m,max_accuracy_m,allowed_cidrs_json,active,updated_at,updated_by) ' +
+      'VALUES(?,?,?,?,?,?,?,?,1,?,?) ON CONFLICT(company_id,branch) DO UPDATE SET ' +
+      'latitude=excluded.latitude,longitude=excluded.longitude,radius_m=excluded.radius_m,' +
+      'max_accuracy_m=excluded.max_accuracy_m,allowed_cidrs_json=excluded.allowed_cidrs_json,active=1,' +
+      'updated_at=excluded.updated_at,updated_by=excluded.updated_by'
+    ).run(id,admin.company_id,input.branch,input.latitude,input.longitude,input.radiusM,input.maxAccuracyM,
+      JSON.stringify(input.allowedCidrs),updatedAt,admin.id);
+    writeAudit(admin.company_id,admin.id,'mobile.site_configured','mobile_site',id,{
+      branch:input.branch,radiusM:input.radiusM,maxAccuracyM:input.maxAccuracyM,allowedCidrs:input.allowedCidrs
+    });
+    res.json({ok:true,configured:true,settings:{...input,id,active:true,updatedAt}});
+  } catch(error) { next(error); }
+});
+
 app.use((req,res,next) => next(appError(404,'Ruta no encontrada.')));
 app.use((err,req,res,next) => {
   if (err instanceof z.ZodError) return res.status(400).json({error:'Datos inválidos.',details:err.issues.map(i=>({field:i.path.join('.'),message:i.message}))});
@@ -521,6 +818,32 @@ function bootstrap() {
 bootstrap();
 
 const server=app.listen(PORT,process.env.HOST||'127.0.0.1',()=>console.log(`ASISTIA API 0.2 escuchando en ${process.env.HOST||'127.0.0.1'}:${PORT}`));
-function shutdown() { server.close(()=>{db.close();process.exit(0);}); }
+let mobileHttpsServer = null;
+const mobilePfxPath = process.env.MOBILE_HTTPS_PFX_PATH || '';
+const mobilePfxPassphrase = process.env.MOBILE_HTTPS_PFX_PASSPHRASE || '';
+const mobileKeyPath = process.env.MOBILE_HTTPS_KEY_PATH || '';
+const mobileCertPath = process.env.MOBILE_HTTPS_CERT_PATH || '';
+if (mobilePfxPath || mobileKeyPath || mobileCertPath) {
+  const mobileHttpsPort = Number(process.env.MOBILE_HTTPS_PORT || 43178);
+  const mobileHttpsHost = process.env.MOBILE_HTTPS_HOST || '0.0.0.0';
+  if (!Number.isInteger(mobileHttpsPort) || mobileHttpsPort < 1 || mobileHttpsPort > 65535) throw new Error('MOBILE_HTTPS_PORT no es válido.');
+  let tlsOptions;
+  if (mobilePfxPath) {
+    if (mobileKeyPath || mobileCertPath) throw new Error('Usa PFX o el par KEY/CERT, no ambos.');
+    tlsOptions = { pfx: readFileSync(resolve(mobilePfxPath)), passphrase: mobilePfxPassphrase };
+  } else {
+    if (!mobileKeyPath || !mobileCertPath) throw new Error('Configura MOBILE_HTTPS_KEY_PATH y MOBILE_HTTPS_CERT_PATH juntos.');
+    tlsOptions = { key: readFileSync(resolve(mobileKeyPath)), cert: readFileSync(resolve(mobileCertPath)) };
+  }
+  mobileHttpsServer = https.createServer(tlsOptions, app);
+  mobileHttpsServer.listen(mobileHttpsPort, mobileHttpsHost, () => console.log('ASISTIA Móvil HTTPS escuchando en ' + mobileHttpsHost + ':' + mobileHttpsPort));
+}
+function shutdown() {
+  const closeDatabase = () => { try { db.close(); } finally { process.exit(0); } };
+  if (mobileHttpsServer && mobileHttpsServer.listening) {
+    mobileHttpsServer.close(() => { if (server.listening) server.close(closeDatabase); else closeDatabase(); });
+  } else if (server.listening) server.close(closeDatabase);
+  else closeDatabase();
+}
 process.on('SIGINT',shutdown);
 process.on('SIGTERM',shutdown);
