@@ -15,6 +15,7 @@ let mainWindow = null;
 let backendProcess = null;
 let stopping = false;
 let mobileConnection = null;
+let backendStartup = { ready: false, reason: 'El servicio local todavía no ha confirmado que esté disponible.' };
 
 app.setAppUserModelId('mx.asistia.desktop');
 app.setPath('userData', path.join(app.getPath('appData'), 'ASISTIA'));
@@ -166,8 +167,9 @@ function ensureMobileCertificates(backendDir, userData, security, scriptPath) {
 async function waitForLocalApi(timeoutMs = 30000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline && !stopping) {
+    if (!backendProcess || backendProcess.exitCode !== null || backendProcess.signalCode !== null) return false;
     try {
-      const response = await fetch(API_URL + '/api/health', { signal: AbortSignal.timeout(1200) });
+      const response = await fetch(API_URL + '/api/health', { signal: AbortSignal.timeout(1200), cache: 'no-store' });
       if (response.ok) {
         const data = await response.json();
         if (data.status === 'ok' && data.database === 'ok') return true;
@@ -182,25 +184,88 @@ function writeBackendDiagnostic(message) {
   try {
     const logDir = path.join(app.getPath('userData'), 'logs');
     fs.mkdirSync(logDir, { recursive: true });
-    fs.appendFileSync(path.join(logDir, 'backend-startup.log'), '[' + new Date().toISOString() + '] ' + String(message) + '\\n', 'utf8');
+    fs.appendFileSync(path.join(logDir, 'backend-startup.log'),
+      '[' + new Date().toISOString() + '] ' + String(message) + '\n', 'utf8');
   } catch {}
+}
+
+function readBackendDiagnosticTail(maxBytes = 12000) {
+  try {
+    const file = path.join(app.getPath('userData'), 'logs', 'backend-startup.log');
+    if (!fs.existsSync(file)) return '';
+    const fd = fs.openSync(file, 'r');
+    try {
+      const size = fs.fstatSync(fd).size;
+      const length = Math.min(size, maxBytes);
+      const buffer = Buffer.alloc(length);
+      fs.readSync(fd, buffer, 0, length, size - length);
+      return buffer.toString('utf8').split(/\r?\n/).filter(Boolean).slice(-35).join('\n');
+    } finally { fs.closeSync(fd); }
+  } catch (error) {
+    return 'No se pudo leer el registro local: ' + (error.message || error);
+  }
+}
+
+function preflightBundledNode(nodeCommand, backendDir) {
+  const probeCode = [
+    "const Database = require('better-sqlite3');",
+    "const db = new Database(':memory:');",
+    "const result = db.prepare('SELECT 1 AS ready').get();",
+    "if (result.ready !== 1) process.exit(4);",
+    "db.close();",
+    "process.stdout.write(process.version + ' | better-sqlite3 OK');"
+  ].join(' ');
+  const probe = spawnSync(nodeCommand, ['-e', probeCode], {
+    cwd: backendDir,
+    encoding: 'utf8',
+    timeout: 15000,
+    windowsHide: true,
+    env: { ...process.env }
+  });
+  if (probe.error || probe.status !== 0) {
+    const detail = probe.error?.message || probe.stderr || probe.stdout || ('código de salida ' + probe.status);
+    throw new Error('El runtime Node.js incluido no pudo cargar better-sqlite3. ' + String(detail).trim());
+  }
+  writeBackendDiagnostic('Preflight de runtime correcto: ' + String(probe.stdout).trim());
 }
 
 async function startLocalBackend() {
   const { backendDir, serverFile, nodeCommand, mobileCertScript } = runtimePaths();
-  writeBackendDiagnostic('Inicio de backend. packaged=' + app.isPackaged + '; backendDir=' + backendDir + '; serverFile=' + serverFile + '; node=' + nodeCommand);
+  backendStartup = { ready: false, reason: 'El servicio local no ha iniciado.' };
+  writeBackendDiagnostic('Inicio de backend. packaged=' + app.isPackaged + '; platform=' + process.platform +
+    '; arch=' + process.arch + '; backendDir=' + backendDir + '; serverFile=' + serverFile + '; node=' + nodeCommand);
+
   if (!fs.existsSync(serverFile)) {
-    writeBackendDiagnostic('ERROR: no existe server.js.');
+    backendStartup.reason = 'No se encontró el servidor local incluido en ASISTIA.';
+    writeBackendDiagnostic('ERROR: ' + backendStartup.reason + ' Ruta: ' + serverFile);
     return false;
   }
   if (app.isPackaged && !fs.existsSync(nodeCommand)) {
-    writeBackendDiagnostic('ERROR: no existe el Node.js integrado.');
+    backendStartup.reason = 'No se encontró el runtime Node.js incluido en ASISTIA.';
+    writeBackendDiagnostic('ERROR: ' + backendStartup.reason + ' Ruta: ' + nodeCommand);
     return false;
   }
 
   const userData = app.getPath('userData');
-  const security = loadOrCreateSecret();
-  mobileConnection = ensureMobileCertificates(backendDir,userData,security,mobileCertScript);
+  let security;
+  try {
+    security = loadOrCreateSecret();
+    preflightBundledNode(nodeCommand, backendDir);
+  } catch (error) {
+    backendStartup.reason = error.message || 'Falló la comprobación del runtime local.';
+    writeBackendDiagnostic('ERROR de preflight: ' + (error.stack || error.message));
+    return false;
+  }
+
+  mobileConnection = ensureMobileCertificates(backendDir, userData, security, mobileCertScript);
+  if (mobileConnection?.ready) {
+    writeBackendDiagnostic('Certificado móvil preparado. IP preferida=' + mobileConnection.preferredIp +
+      '; firewall=' + mobileConnection.firewallConfigured);
+  } else {
+    writeBackendDiagnostic('HTTPS móvil no preparado: ' + (mobileConnection?.error || 'No se detectó una red privada IPv4.') +
+      '; candidates=' + JSON.stringify(mobileConnection?.networks || []));
+  }
+
   const env = {
     ...process.env,
     NODE_ENV: 'production',
@@ -240,16 +305,23 @@ async function startLocalBackend() {
       windowsHide: true,
       stdio: ['ignore', logFd ?? 'ignore', logFd ?? 'ignore']
     });
-    backendProcess.on('spawn', () => writeBackendDiagnostic('Proceso Node iniciado. PID=' + backendProcess.pid));
+    backendProcess.on('spawn', () => writeBackendDiagnostic('Proceso Node iniciado. PID=' + backendProcess?.pid));
     backendProcess.on('error', error => {
+      backendStartup = { ready: false, reason: 'Windows no pudo ejecutar el servidor local: ' + (error.message || error) };
       writeBackendDiagnostic('ERROR al ejecutar Node: ' + (error.stack || error.message));
       backendProcess = null;
     });
     backendProcess.on('exit', (code, signal) => {
       writeBackendDiagnostic('Proceso Node terminó. code=' + code + '; signal=' + signal);
+      if (!backendStartup.ready) {
+        backendStartup = { ready: false, reason: 'El servidor local se cerró durante el arranque. Código: ' + code + '; señal: ' + (signal || 'ninguna') };
+      } else if (!stopping) {
+        backendStartup = { ready: false, reason: 'El servidor local se detuvo inesperadamente. Código: ' + code + '; señal: ' + (signal || 'ninguna') };
+      }
       backendProcess = null;
     });
   } catch (error) {
+    backendStartup = { ready: false, reason: 'No se pudo crear el proceso del servidor local: ' + (error.message || error) };
     writeBackendDiagnostic('ERROR al crear proceso Node: ' + (error.stack || error.message));
     backendProcess = null;
   } finally {
@@ -258,9 +330,24 @@ async function startLocalBackend() {
     }
   }
 
+  if (!backendProcess) return false;
   const ready = await waitForLocalApi();
-  writeBackendDiagnostic('Resultado de arranque: ' + (ready ? 'API disponible' : 'API no respondió en 30 segundos'));
-  return ready;
+  if (ready) {
+    backendStartup = { ready: true, reason: '' };
+    writeBackendDiagnostic('Resultado de arranque: API disponible y base de datos operativa.');
+    return true;
+  }
+
+  const tail = readBackendDiagnosticTail();
+  backendStartup = {
+    ready: false,
+    reason: backendProcess
+      ? 'El servidor se inició, pero no respondió en el puerto local ' + API_PORT + '.'
+      : 'El servidor local terminó antes de quedar disponible.'
+  };
+  writeBackendDiagnostic('Resultado de arranque: API no disponible. ' + backendStartup.reason);
+  if (tail) writeBackendDiagnostic('Últimas líneas de diagnóstico:\n' + tail);
+  return false;
 }
 
 ipcMain.handle('asistia:trial-status', () => getTrialStatus());
@@ -273,28 +360,44 @@ ipcMain.handle('asistia:open-activation-whatsapp', async () => {
 
 ipcMain.handle('asistia:health', async () => {
   try {
-    const response = await fetch(API_URL + '/api/health', { signal: AbortSignal.timeout(1800) });
-    if (!response.ok) throw new Error('Servicio local no disponible');
+    const response = await fetch(API_URL + '/api/health', { signal: AbortSignal.timeout(1800), cache: 'no-store' });
+    if (!response.ok) throw new Error('HTTP ' + response.status);
     return await response.json();
-  } catch {
-    return { status: 'offline', database: 'unknown', service: 'ASISTIA local', version: activeUpdateVersion(path.join(app.getPath('userData'), 'updates')) };
+  } catch (error) {
+    const reason = backendStartup.reason || ('No se pudo conectar con el servidor local: ' + (error.message || error));
+    return {
+      status: 'offline',
+      database: 'unknown',
+      service: 'ASISTIA local',
+      version: activeUpdateVersion(path.join(app.getPath('userData'), 'updates')),
+      reason,
+      logPath: path.join(app.getPath('userData'), 'logs', 'backend-startup.log')
+    };
   }
 });
 
 async function desktopBridgeRequest(route, options = {}) {
   if (!localSecurity) loadOrCreateSecret();
-  const response = await fetch(API_URL + route, {
-    method: options.method || 'GET',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-ASISTIA-Desktop-Bridge': localSecurity.desktopBridgeToken
-    },
-    body: options.body ? JSON.stringify(options.body) : undefined,
-    signal: AbortSignal.timeout(8000),
-    cache: 'no-store'
-  });
+  let response;
+  try {
+    response = await fetch(API_URL + route, {
+      method: options.method || 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-ASISTIA-Desktop-Bridge': localSecurity.desktopBridgeToken
+      },
+      body: options.body ? JSON.stringify(options.body) : undefined,
+      signal: AbortSignal.timeout(8000),
+      cache: 'no-store'
+    });
+  } catch (error) {
+    const detail = backendStartup.reason || (error.message || 'No hubo respuesta del servidor local.');
+    writeBackendDiagnostic('Fallo de comunicación con ' + route + ': ' + (error.stack || error.message));
+    throw new Error('ASISTIA no puede comunicarse con su servicio local. ' + detail +
+      ' Diagnóstico guardado en: ' + path.join(app.getPath('userData'), 'logs', 'backend-startup.log'));
+  }
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || 'No se pudo completar la operación local.');
+  if (!response.ok) throw new Error(data.error || 'No se pudo completar la operación local. HTTP ' + response.status);
   return data;
 }
 
@@ -521,7 +624,8 @@ if (!hasLock) {
   });
   app.whenReady().then(async () => {
     getTrialStatus();
-    await startLocalBackend();
+    const backendReady = await startLocalBackend();
+    if (!backendReady) writeBackendDiagnostic('ASISTIA PC abrirá en modo limitado; las funciones que requieren el servicio local mostrarán el motivo del fallo.');
     createWindow();
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
