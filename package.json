@@ -28,14 +28,20 @@
     ],
     "extraResources": [
       {
-        "from": "backend",
-        "to": "backend",
-        "filter": [
-          "src/**/*",
-          "package.json",
-          "node_modules/**/*",
-          "runtime/node.exe"
-        ]
+        "from": "backend/src",
+        "to": "backend/src"
+      },
+      {
+        "from": "backend/package.json",
+        "to": "backend/package.json"
+      },
+      {
+        "from": "backend/runtime/node.exe",
+        "to": "backend/runtime/node.exe"
+      },
+      {
+        "from": "backend/node_modules",
+        "to": "backend/node_modules"
       }
     ],
     "win": {
