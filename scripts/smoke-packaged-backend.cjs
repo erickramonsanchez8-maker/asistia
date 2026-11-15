@@ -28,10 +28,11 @@ function reservePort() {
   });
 }
 
-async function waitForHealth(baseUrl, child, readOutput, timeoutMs = 20000) {
+async function waitForHealth(baseUrl, child, readOutput, getSpawnError, timeoutMs = 20000) {
   const deadline = Date.now() + timeoutMs;
   let lastError = 'La API todavía no respondió.';
   while (Date.now() < deadline) {
+    if (getSpawnError()) throw new Error('Windows no pudo iniciar el node.exe empaquetado: ' + getSpawnError().message + '\n' + readOutput());
     if (child.exitCode !== null) {
       throw new Error('El backend terminó antes de estar listo (código ' + child.exitCode + ').\n' + readOutput());
     }
@@ -79,7 +80,9 @@ async function main() {
   fs.mkdirSync(path.dirname(env.DATABASE_PATH), { recursive: true });
 
   let output = '';
+  let spawnError = null;
   const child = spawn(nodeExe, [serverFile], { cwd: backendDir, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  child.on('error', error => { spawnError = error; });
   child.stdout.setEncoding('utf8');
   child.stderr.setEncoding('utf8');
   child.stdout.on('data', chunk => { output = (output + chunk).slice(-12000); });
@@ -88,7 +91,7 @@ async function main() {
 
   try {
     const baseUrl = 'http://127.0.0.1:' + port;
-    const health = await waitForHealth(baseUrl, child, readOutput);
+    const health = await waitForHealth(baseUrl, child, readOutput, () => spawnError);
     assert.equal(health.database, 'ok');
 
     const headers = {
