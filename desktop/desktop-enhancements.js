@@ -91,6 +91,11 @@
       const ok = data && data.status === 'ok' && data.database === 'ok';
       badge.dataset.state = ok ? 'ok' : 'off';
       badge.querySelector('span').textContent = ok ? 'SERVICIO LOCAL ACTIVO' : 'SERVICIO LOCAL SIN CONEXIÓN';
+      badge.title = ok
+        ? 'Servicio local de ASISTIA activo. Pulsa para abrir la carpeta de datos.'
+        : 'El servicio local de ASISTIA no está disponible. ' +
+          (data?.reason || 'Consulta el registro de inicio en la carpeta de datos.') +
+          (data?.logPath ? '\nRegistro: ' + data.logPath : '');
     } catch {
       badge.dataset.state = 'off';
       badge.querySelector('span').textContent = 'SERVICIO LOCAL SIN CONEXIÓN';
