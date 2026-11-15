@@ -52,6 +52,16 @@ jobs:
           }
       - name: Build Windows NSIS installer
         run: npm run dist:win
+      - name: Generate local HTTPS certificate for packaged mobile smoke test
+        shell: pwsh
+        run: |
+          $env:ASISTIA_CERT_PASSWORD = 'ASISTIA-Smoke-Only-Password-2026'
+          $certificateDirectory = Join-Path $env:RUNNER_TEMP 'asistia-mobile-smoke-certificates'
+          & ./backend/src/mobile/ensure-certificates.ps1 -OutputDirectory $certificateDirectory -ServerIps '127.0.0.1' -SkipFirewall | Out-Null
+          $status = Get-Content (Join-Path $certificateDirectory 'mobile-certificate-status.json') -Raw | ConvertFrom-Json
+          if (!(Test-Path $status.pfxPath)) { throw 'No se generó el PFX HTTPS de prueba.' }
+          "ASISTIA_SMOKE_PFX_PATH=$($status.pfxPath)" | Add-Content -Path $env:GITHUB_ENV
+          "ASISTIA_SMOKE_PFX_PASSWORD=$env:ASISTIA_CERT_PASSWORD" | Add-Content -Path $env:GITHUB_ENV
       - name: Smoke test packaged Windows backend and mobile configuration bridge
         run: node scripts/smoke-packaged-backend.cjs release/win-unpacked/resources/backend
       - name: Build in-app update package
